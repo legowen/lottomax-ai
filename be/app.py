@@ -176,6 +176,8 @@ def build_lstm_model(num_range: int, seq_len: int = SEQUENCE_LENGTH) -> keras.Mo
         metrics=["accuracy"],
     )
 
+    model.build(input_shape=(None, seq_len, num_range))
+
     return model
 
 
