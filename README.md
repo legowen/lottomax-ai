@@ -47,7 +47,7 @@ A deep learning-powered lottery number prediction app using a **5-strategy ensem
 ### 1. Backend Setup
 
 ```bash
-cd backend
+cd be
 
 # Create virtual environment
 python3 -m venv venv
@@ -66,7 +66,7 @@ The backend runs at `http://localhost:8000`.
 ### 2. Frontend Setup
 
 ```bash
-cd frontend
+cd fe
 
 # If fresh project, create with Vite:
 npm create vite@latest . -- --template react
