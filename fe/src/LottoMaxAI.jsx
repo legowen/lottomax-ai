@@ -2,14 +2,13 @@ import { useState, useEffect, useCallback, useRef } from "react";
 
 // ============================================================
 // LottoMax AI - Frontend
-// Connects to FastAPI backend with real LSTM ensemble
+// Connects to FastAPI backend with real LSTM 6-Strategy ensemble
 // ============================================================
 
 const API = "http://localhost:8000";
 
 // Ball colors by number range
-const getBallColor = (num, isExtra = false) => {
-  if (isExtra) return { bg: "linear-gradient(135deg, #f59e0b, #d97706)", text: "#fff", glow: "rgba(245,158,11,0.5)" };
+const getBallColor = (num) => {
   if (num <= 10) return { bg: "linear-gradient(135deg, #ef4444, #dc2626)", text: "#fff", glow: "rgba(239,68,68,0.5)" };
   if (num <= 20) return { bg: "linear-gradient(135deg, #3b82f6, #2563eb)", text: "#fff", glow: "rgba(59,130,246,0.5)" };
   if (num <= 30) return { bg: "linear-gradient(135deg, #a855f7, #9333ea)", text: "#fff", glow: "rgba(168,85,247,0.5)" };
@@ -20,9 +19,9 @@ const getBallColor = (num, isExtra = false) => {
 // ============================================================
 // Components
 // ============================================================
-function LottoBall({ number, delay = 0, isExtra = false, isRevealed = true, size = "lg" }) {
+function LottoBall({ number, delay = 0, isRevealed = true, size = "lg" }) {
   const [revealed, setRevealed] = useState(false);
-  const color = getBallColor(number, isExtra);
+  const color = getBallColor(number);
 
   useEffect(() => {
     if (isRevealed) {
@@ -40,35 +39,19 @@ function LottoBall({ number, delay = 0, isExtra = false, isRevealed = true, size
   const s = sizes[size] || sizes.lg;
 
   return (
-    <div
-      style={{
-        width: s.width,
-        height: s.height,
-        minWidth: s.width,
-        minHeight: s.height,
-        borderRadius: "50%",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        fontWeight: 900,
-        fontSize: s.fontSize,
-        flexShrink: 0,
-        position: "relative",
-        background: revealed ? color.bg : "linear-gradient(135deg, #374151, #1f2937)",
-        color: revealed ? color.text : "#6b7280",
-        transform: revealed ? "scale(1)" : "scale(0.6)",
-        opacity: revealed ? 1 : 0.4,
-        boxShadow: revealed ? `0 0 20px ${color.glow}, inset 0 -3px 6px rgba(0,0,0,0.3)` : "none",
-        transition: "all 0.7s ease-out",
-        userSelect: "none",
-      }}
-    >
-      {revealed && (
-        <div style={{
-          position: "absolute", inset: 0, borderRadius: "50%",
-          background: "radial-gradient(circle at 35% 30%, rgba(255,255,255,0.4) 0%, transparent 60%)",
-        }} />
-      )}
+    <div style={{
+      width: s.width, height: s.height, minWidth: s.width, minHeight: s.height,
+      borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center",
+      fontWeight: 900, fontSize: s.fontSize, flexShrink: 0, position: "relative",
+      background: revealed ? color.bg : "linear-gradient(135deg, #374151, #1f2937)",
+      color: revealed ? color.text : "#6b7280",
+      transform: revealed ? "scale(1)" : "scale(0.6)",
+      opacity: revealed ? 1 : 0.4,
+      boxShadow: revealed ? `0 0 20px ${color.glow}, inset 0 -3px 6px rgba(0,0,0,0.3)` : "none",
+      transition: "all 0.7s ease-out", userSelect: "none",
+    }}>
+      {revealed && <div style={{ position: "absolute", inset: 0, borderRadius: "50%",
+        background: "radial-gradient(circle at 35% 30%, rgba(255,255,255,0.4) 0%, transparent 60%)" }} />}
       <span style={{ position: "relative", zIndex: 1 }}>{revealed ? number : "?"}</span>
     </div>
   );
@@ -83,6 +66,7 @@ function StrategyBar({ strategies, number }) {
     { key: "Gap", val: s.gap, color: "#a855f7" },
     { key: "Pair", val: s.pair, color: "#22c55e" },
     { key: "Dist", val: s.distribution, color: "#f97316" },
+    { key: "Seed", val: s.seed, color: "#facc15" },
   ];
 
   return (
@@ -116,19 +100,19 @@ function FrequencyChart({ data, numRange, title }) {
         {Array.from({ length: numRange }, (_, i) => i + 1).map((n) => {
           const freq = data[String(n)] || 0;
           return (
-            <div key={n} style={{ display: "flex", flexDirection: "column", alignItems: "center", flexShrink: 0, width: numRange > 50 ? "8px" : "14px" }}>
+            <div key={n} style={{ display: "flex", flexDirection: "column", alignItems: "center", flexShrink: 0, width: "14px" }}>
               <div
                 style={{
                   width: "100%",
                   borderRadius: "2px 2px 0 0",
                   transition: "all 0.3s",
                   height: `${maxFreq > 0 ? (freq / maxFreq) * 80 : 0}px`,
-                  background: getBallColor(n, numRange > 50).bg,
+                  background: getBallColor(n).bg,
                   opacity: freq > 0 ? 0.7 : 0.15,
                 }}
                 title={`#${n}: ${freq} times`}
               />
-              {numRange <= 50 && n % 5 === 0 && (
+              {n % 5 === 0 && (
                 <span style={{ color: "#94a3b8", marginTop: "4px", fontSize: "8px" }}>{n}</span>
               )}
             </div>
@@ -156,8 +140,9 @@ export default function LottoMaxAI() {
   const [frequencies, setFrequencies] = useState(null);
   const [activeTab, setActiveTab] = useState("generate");
   const [epochs, setEpochs] = useState(100);
+  const [seedAnalysis, setSeedAnalysis] = useState(null);
   const [weights, setWeights] = useState({
-    lstm: 0.30, frequency: 0.20, gap: 0.20, pair: 0.15, distribution: 0.15,
+    lstm: 0.25, frequency: 0.18, gap: 0.17, pair: 0.13, distribution: 0.12, seed: 0.15,
   });
 
   const pollRef = useRef(null);
@@ -249,7 +234,6 @@ export default function LottoMaxAI() {
         {
           id: Date.now(),
           main: data.main.numbers,
-          extra: data.extra?.numbers || null,
           confidence: data.main.confidence,
           modelTrained: data.model_trained,
           time: new Date().toLocaleTimeString(),
@@ -269,6 +253,21 @@ export default function LottoMaxAI() {
       const res = await fetch(`${API}/frequencies`);
       const data = await res.json();
       setFrequencies(data);
+    } catch {
+      // ignore
+    }
+  };
+
+  // Run seed analysis
+  const runSeedAnalysis = async () => {
+    try {
+      const res = await fetch(`${API}/seed-analysis`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ max_draws: 20 }),
+      });
+      const data = await res.json();
+      setSeedAnalysis(data);
     } catch {
       // ignore
     }
@@ -307,7 +306,7 @@ export default function LottoMaxAI() {
             LOTTOMAX AI
           </h1>
           <p style={{ color: "#94a3b8", fontSize: "12px", letterSpacing: "0.15em", textTransform: "uppercase", marginTop: "4px" }}>
-            LSTM + 5-Strategy Ensemble Engine
+            LSTM + 6-Strategy Ensemble Engine
           </p>
         </header>
 
@@ -461,6 +460,7 @@ export default function LottoMaxAI() {
                     padding: "12px",
                     maxHeight: "200px",
                     overflowY: "auto",
+                    marginBottom: "24px",
                     fontFamily: "monospace",
                     fontSize: "12px",
                   }}
@@ -530,13 +530,14 @@ export default function LottoMaxAI() {
                   </button>
 
                   {showStrategies && (
-                    <div style={{ marginTop: "12px", display: "flex", justifyContent: "center", gap: "16px", fontSize: "12px", color: "#cbd5e1" }}>
+                    <div style={{ marginTop: "12px", display: "flex", justifyContent: "center", gap: "16px", fontSize: "12px", color: "#cbd5e1", flexWrap: "wrap" }}>
                       {[
                         { label: "LSTM", color: "#ef4444" },
                         { label: "Freq", color: "#3b82f6" },
                         { label: "Gap", color: "#a855f7" },
                         { label: "Pair", color: "#22c55e" },
                         { label: "Dist", color: "#f97316" },
+                        { label: "Seed", color: "#facc15" },
                       ].map((s) => (
                         <span key={s.label} style={{ display: "flex", alignItems: "center", gap: "4px" }}>
                           <div style={{ width: "8px", height: "8px", borderRadius: "2px", backgroundColor: s.color }} />
@@ -546,26 +547,6 @@ export default function LottoMaxAI() {
                     </div>
                   )}
                 </div>
-
-                {/* Extra Numbers */}
-                {prediction.extra && (
-                  <div style={{
-                    background: "rgba(255,255,255,0.03)",
-                    border: "1px solid rgba(245,158,11,0.3)",
-                    borderRadius: "16px",
-                    padding: "24px",
-                  }}>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "20px" }}>
-                      <h2 style={{ fontSize: "14px", fontWeight: 700, color: "#fbbf24", textTransform: "uppercase", letterSpacing: "0.05em" }}>Extra Numbers</h2>
-                      <span style={{ fontSize: "12px", color: "#cbd5e1" }}>{prediction.extra.confidence}%</span>
-                    </div>
-                    <div style={{ display: "flex", flexDirection: "row", alignItems: "center", justifyContent: "center", gap: "12px", flexWrap: "nowrap" }}>
-                      {prediction.extra.numbers.map((num, i) => (
-                        <LottoBall key={num} number={num} delay={i * 200 + 1400} isExtra={true} isRevealed={true} />
-                      ))}
-                    </div>
-                  </div>
-                )}
               </div>
             )}
 
@@ -596,16 +577,6 @@ export default function LottoMaxAI() {
                           <LottoBall key={n} number={n} size="sm" isRevealed={true} delay={0} />
                         ))}
                       </div>
-                      {h.extra && (
-                        <>
-                          <span style={{ color: "#64748b", fontSize: "12px" }}>+</span>
-                          <div style={{ display: "flex", flexDirection: "row", gap: "4px", flexWrap: "nowrap" }}>
-                            {h.extra.map((n) => (
-                              <LottoBall key={n} number={n} size="sm" isExtra={true} isRevealed={true} delay={0} />
-                            ))}
-                          </div>
-                        </>
-                      )}
                       <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "8px", flexShrink: 0 }}>
                         {h.modelTrained && <span style={{ fontSize: "12px", color: "#60a5fa" }}>LSTM</span>}
                         <span style={{ fontSize: "12px", color: "#94a3b8" }}>{h.confidence}%</span>
@@ -625,11 +596,6 @@ export default function LottoMaxAI() {
               <>
                 <FrequencyChart data={frequencies.main_recent} numRange={50}
                   title={`LottoMax Frequency (Last ${frequencies.recent_window} Draws)`} />
-
-                {frequencies.extra_recent && (
-                  <FrequencyChart data={frequencies.extra_recent} numRange={99}
-                    title={`Extra Frequency (Last ${frequencies.recent_window} Draws)`} />
-                )}
 
                 {/* Hot & Cold */}
                 <div style={{ marginTop: "32px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
@@ -682,6 +648,55 @@ export default function LottoMaxAI() {
             ) : (
               <p style={{ textAlign: "center", color: "#94a3b8" }}>Loading analysis...</p>
             )}
+
+            {/* Seed Analysis Section */}
+            <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "16px", padding: "20px", marginTop: "24px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+                <h3 style={{ fontSize: "14px", fontWeight: 700, color: "#facc15", textTransform: "uppercase", letterSpacing: "0.05em" }}>🔑 Seed/RNG Analysis</h3>
+                <button onClick={runSeedAnalysis} style={{ padding: "6px 16px", borderRadius: "8px", fontSize: "12px", background: "rgba(250,204,21,0.1)", border: "1px solid rgba(250,204,21,0.3)", color: "#facc15", cursor: "pointer" }}>
+                  Run Analysis
+                </button>
+              </div>
+              {seedAnalysis && (
+                <div>
+                  <p style={{ color: "#cbd5e1", fontSize: "13px" }}>
+                    Tested {seedAnalysis.tested_seeds} seeds &bull; {seedAnalysis.perfect_matches} perfect &bull; {seedAnalysis.partial_matches} partial (4+)
+                  </p>
+                  {/* Algo scores */}
+                  <div style={{ display: "flex", gap: "16px", marginTop: "12px" }}>
+                    {Object.entries(seedAnalysis.algo_scores).map(([algo, score]) => (
+                      <div key={algo} style={{ flex: 1 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", fontSize: "11px", color: "#94a3b8", marginBottom: "4px" }}>
+                          <span>{algo.toUpperCase()}</span><span>{score}</span>
+                        </div>
+                        <div style={{ height: "6px", background: "rgba(255,255,255,0.05)", borderRadius: "3px" }}>
+                          <div style={{ height: "100%", borderRadius: "3px", background: "#facc15", width: `${Math.min(100, score)}%` }} />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  {/* Top partial matches */}
+                  {seedAnalysis.top_partial && seedAnalysis.top_partial.length > 0 && (
+                    <div style={{ marginTop: "16px" }}>
+                      <h4 style={{ fontSize: "12px", fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "8px" }}>Top Partial Matches</h4>
+                      <div style={{ maxHeight: "160px", overflowY: "auto" }}>
+                        {seedAnalysis.top_partial.map((m, i) => (
+                          <div key={i} style={{ display: "flex", alignItems: "center", gap: "8px", padding: "4px 0", fontSize: "12px", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+                            <span style={{ color: "#facc15", fontWeight: 700, width: "24px" }}>{m.match}/{7}</span>
+                            <span style={{ color: "#94a3b8", width: "40px" }}>{m.algo.toUpperCase()}</span>
+                            <span style={{ color: "#cbd5e1" }}>[{m.predicted.join(", ")}]</span>
+                            <span style={{ color: "#94a3b8", marginLeft: "auto" }}>{m.date}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+              {!seedAnalysis && (
+                <p style={{ color: "#94a3b8", fontSize: "12px" }}>Click &quot;Run Analysis&quot; to test PRNG seeds against historical draws.</p>
+              )}
+            </div>
           </div>
         )}
 
@@ -722,6 +737,7 @@ export default function LottoMaxAI() {
                 { key: "gap", label: "Gap Analysis", color: "#a855f7", desc: "Overdue numbers based on gap distributions" },
                 { key: "pair", label: "Pair Correlation", color: "#22c55e", desc: "Numbers that appear together frequently" },
                 { key: "distribution", label: "Distribution Balance", color: "#f97316", desc: "Range & odd/even equilibrium" },
+                { key: "seed", label: "Seed/RNG Analysis", color: "#facc15", desc: "Time-based PRNG reverse engineering" },
               ].map((s) => (
                 <div key={s.key} style={{ marginBottom: "16px" }}>
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "4px" }}>
@@ -744,7 +760,7 @@ export default function LottoMaxAI() {
                   Total: {Object.values(weights).reduce((a, b) => a + b, 0).toFixed(2)}
                 </span>
                 <button
-                  onClick={() => setWeights({ lstm: 0.30, frequency: 0.20, gap: 0.20, pair: 0.15, distribution: 0.15 })}
+                  onClick={() => setWeights({ lstm: 0.25, frequency: 0.18, gap: 0.17, pair: 0.13, distribution: 0.12, seed: 0.15 })}
                   style={{ fontSize: "12px", color: "#94a3b8", background: "none", border: "none", cursor: "pointer" }}
                 >
                   Reset defaults
@@ -758,9 +774,7 @@ export default function LottoMaxAI() {
               {serverInfo ? (
                 <div style={{ fontSize: "12px", color: "#cbd5e1", display: "flex", flexDirection: "column", gap: "4px" }}>
                   <p>Main draws: {serverInfo.main_draws}</p>
-                  <p>Extra draws: {serverInfo.extra_draws}</p>
                   <p>Main model: <span style={{ color: serverInfo.main_model_loaded ? "#4ade80" : "#f87171" }}>{serverInfo.main_model_loaded ? "Loaded" : "Not trained"}</span></p>
-                  <p>Extra model: <span style={{ color: serverInfo.extra_model_loaded ? "#4ade80" : "#f87171" }}>{serverInfo.extra_model_loaded ? "Loaded" : "Not trained"}</span></p>
                   {serverInfo.last_trained && <p>Last trained: {new Date(serverInfo.last_trained).toLocaleString()}</p>}
                 </div>
               ) : (
@@ -790,7 +804,7 @@ export default function LottoMaxAI() {
 
         {/* Footer */}
         <footer style={{ marginTop: "48px", textAlign: "center", fontSize: "12px", color: "#94a3b8" }}>
-          <p>LottoMax AI — LSTM + 5-Strategy Ensemble Engine</p>
+          <p>LottoMax AI — LSTM + 6-Strategy Ensemble Engine</p>
           <p style={{ marginTop: "4px", color: "#94a3b8" }}>For entertainment purposes. Lottery outcomes are not guaranteed.</p>
         </footer>
       </div>
