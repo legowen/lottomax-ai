@@ -32,29 +32,44 @@ function LottoBall({ number, delay = 0, isExtra = false, isRevealed = true, size
     setRevealed(false);
   }, [isRevealed, delay]);
 
-  const sizeMap = {
-    lg: "w-14 h-14 text-xl",
-    md: "w-10 h-10 text-base",
-    sm: "w-8 h-8 text-xs",
+  const sizes = {
+    lg: { width: "56px", height: "56px", fontSize: "22px" },
+    md: { width: "44px", height: "44px", fontSize: "16px" },
+    sm: { width: "32px", height: "32px", fontSize: "12px" },
   };
+  const s = sizes[size] || sizes.lg;
 
   return (
     <div
-      className={`${sizeMap[size]} rounded-full flex items-center justify-center font-black
-        transition-all duration-700 ease-out select-none relative flex-shrink-0`}
       style={{
+        width: s.width,
+        height: s.height,
+        minWidth: s.width,
+        minHeight: s.height,
+        borderRadius: "50%",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        fontWeight: 900,
+        fontSize: s.fontSize,
+        flexShrink: 0,
+        position: "relative",
         background: revealed ? color.bg : "linear-gradient(135deg, #374151, #1f2937)",
         color: revealed ? color.text : "#6b7280",
-        transform: revealed ? "scale(1) rotateY(0deg)" : "scale(0.6) rotateY(180deg)",
+        transform: revealed ? "scale(1)" : "scale(0.6)",
         opacity: revealed ? 1 : 0.4,
         boxShadow: revealed ? `0 0 20px ${color.glow}, inset 0 -3px 6px rgba(0,0,0,0.3)` : "none",
+        transition: "all 0.7s ease-out",
+        userSelect: "none",
       }}
     >
       {revealed && (
-        <div className="absolute inset-0 rounded-full"
-          style={{ background: "radial-gradient(circle at 35% 30%, rgba(255,255,255,0.4) 0%, transparent 60%)" }} />
+        <div style={{
+          position: "absolute", inset: 0, borderRadius: "50%",
+          background: "radial-gradient(circle at 35% 30%, rgba(255,255,255,0.4) 0%, transparent 60%)",
+        }} />
       )}
-      <span className="relative z-10">{revealed ? number : "?"}</span>
+      <span style={{ position: "relative", zIndex: 1 }}>{revealed ? number : "?"}</span>
     </div>
   );
 }
@@ -71,57 +86,21 @@ function StrategyBar({ strategies, number }) {
   ];
 
   return (
-    <div className="flex gap-0.5 items-end h-8 mt-1">
+    <div style={{ display: "flex", gap: "2px", alignItems: "flex-end", height: "32px", marginTop: "4px" }}>
       {items.map((item) => (
         <div
           key={item.key}
           title={`${item.key}: ${(item.val * 100).toFixed(0)}%`}
-          className="w-2 rounded-t transition-all duration-500"
-          style={{ height: `${Math.max(2, item.val * 32)}px`, backgroundColor: item.color, opacity: 0.8 }}
+          style={{
+            width: "8px",
+            borderRadius: "2px 2px 0 0",
+            transition: "all 0.5s",
+            height: `${Math.max(2, item.val * 32)}px`,
+            backgroundColor: item.color,
+            opacity: 0.8,
+          }}
         />
       ))}
-    </div>
-  );
-}
-
-function TrainingProgress({ progress, log }) {
-  const logRef = useRef(null);
-
-  useEffect(() => {
-    if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
-  }, [log]);
-
-  return (
-    <div className="bg-gray-900/80 border border-gray-700 rounded-xl overflow-hidden">
-      {/* Progress bar */}
-      {progress.status === "training" && (
-        <div className="px-4 py-3 border-b border-gray-700">
-          <div className="flex justify-between text-xs text-gray-300 mb-2">
-            <span>{progress.strategy}</span>
-            <span>Epoch {progress.epoch}/{progress.total_epochs} • Loss: {progress.loss}</span>
-          </div>
-          <div className="w-full h-1.5 bg-gray-800 rounded-full overflow-hidden">
-            <div
-              className="h-full rounded-full transition-all duration-300"
-              style={{
-                width: `${(progress.epoch / progress.total_epochs) * 100}%`,
-                background: "linear-gradient(90deg, #3b82f6, #a855f7)",
-              }}
-            />
-          </div>
-        </div>
-      )}
-
-      {/* Log */}
-      <div ref={logRef} className="p-3 font-mono text-xs max-h-48 overflow-y-auto">
-        {log.map((entry, i) => (
-          <div key={i} className="text-gray-300 py-0.5">
-            <span className="text-gray-400 mr-2">{entry.time}</span>
-            {entry.msg}
-          </div>
-        ))}
-        {log.length === 0 && <span className="text-gray-400">Waiting for training...</span>}
-      </div>
     </div>
   );
 }
@@ -131,16 +110,18 @@ function FrequencyChart({ data, numRange, title }) {
   const maxFreq = Math.max(...Object.values(data));
 
   return (
-    <div className="mt-6">
-      <h3 className="text-sm font-semibold text-gray-200 uppercase tracking-wider mb-3">{title}</h3>
-      <div className="flex items-end gap-px h-24 overflow-x-auto pb-1">
+    <div style={{ marginTop: "24px" }}>
+      <h3 style={{ fontSize: "14px", fontWeight: 600, color: "#e2e8f0", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "12px" }}>{title}</h3>
+      <div style={{ display: "flex", alignItems: "flex-end", gap: "1px", height: "96px", overflowX: "auto", paddingBottom: "4px" }}>
         {Array.from({ length: numRange }, (_, i) => i + 1).map((n) => {
           const freq = data[String(n)] || 0;
           return (
-            <div key={n} className="flex flex-col items-center flex-shrink-0" style={{ width: numRange > 50 ? "8px" : "14px" }}>
+            <div key={n} style={{ display: "flex", flexDirection: "column", alignItems: "center", flexShrink: 0, width: numRange > 50 ? "8px" : "14px" }}>
               <div
-                className="w-full rounded-t transition-all duration-300"
                 style={{
+                  width: "100%",
+                  borderRadius: "2px 2px 0 0",
+                  transition: "all 0.3s",
                   height: `${maxFreq > 0 ? (freq / maxFreq) * 80 : 0}px`,
                   background: getBallColor(n, numRange > 50).bg,
                   opacity: freq > 0 ? 0.7 : 0.15,
@@ -148,7 +129,7 @@ function FrequencyChart({ data, numRange, title }) {
                 title={`#${n}: ${freq} times`}
               />
               {numRange <= 50 && n % 5 === 0 && (
-                <span className="text-gray-400 mt-1" style={{ fontSize: "8px" }}>{n}</span>
+                <span style={{ color: "#94a3b8", marginTop: "4px", fontSize: "8px" }}>{n}</span>
               )}
             </div>
           );
@@ -180,6 +161,7 @@ export default function LottoMaxAI() {
   });
 
   const pollRef = useRef(null);
+  const logRef = useRef(null);
 
   // Check server connection
   const checkServer = useCallback(async () => {
@@ -220,6 +202,11 @@ export default function LottoMaxAI() {
       // ignore
     }
   }, []);
+
+  // Auto-scroll training log
+  useEffect(() => {
+    if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
+  }, [trainingLog]);
 
   // Train model
   const startTraining = async () => {
@@ -292,43 +279,57 @@ export default function LottoMaxAI() {
   }, [activeTab, connected]);
 
   return (
-    <div
-      className="min-h-screen w-full text-white"
-      style={{
-        background: "linear-gradient(160deg, #0a0a0f 0%, #0d1117 30%, #101820 60%, #0a0a0f 100%)",
-        fontFamily: "'JetBrains Mono', 'SF Mono', 'Fira Code', monospace",
-      }}
-    >
+    <div style={{
+      minHeight: "100vh",
+      width: "100%",
+      background: "linear-gradient(160deg, #0a0a0f 0%, #0d1117 30%, #101820 60%, #0a0a0f 100%)",
+      color: "#e2e8f0",
+      fontFamily: "'JetBrains Mono', 'SF Mono', monospace",
+    }}>
       {/* Background grid */}
-      <div className="fixed inset-0 opacity-5 pointer-events-none"
-        style={{ backgroundImage: "radial-gradient(circle, #ffffff 1px, transparent 1px)", backgroundSize: "30px 30px" }} />
+      <div style={{
+        position: "fixed", inset: 0, opacity: 0.05, pointerEvents: "none",
+        backgroundImage: "radial-gradient(circle, #ffffff 1px, transparent 1px)",
+        backgroundSize: "30px 30px",
+      }} />
 
-      <div className="relative max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-10">
+      <div style={{ position: "relative", maxWidth: "960px", margin: "0 auto", padding: "32px 24px" }}>
         {/* Header */}
-        <header className="text-center mb-2">
-          <h1 className="text-3xl sm:text-4xl font-black tracking-tight"
-            style={{
-              background: "linear-gradient(135deg, #fff 0%, #94a3b8 50%, #fff 100%)",
-              WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent",
-            }}>
+        <header style={{ textAlign: "center", marginBottom: "8px" }}>
+          <h1 style={{
+            fontSize: "clamp(28px, 5vw, 40px)",
+            fontWeight: 900,
+            letterSpacing: "-0.02em",
+            background: "linear-gradient(135deg, #fff 0%, #94a3b8 50%, #fff 100%)",
+            WebkitBackgroundClip: "text",
+            WebkitTextFillColor: "transparent",
+          }}>
             LOTTOMAX AI
           </h1>
-          <p className="text-gray-400 text-xs tracking-widest uppercase mt-1">
+          <p style={{ color: "#94a3b8", fontSize: "12px", letterSpacing: "0.15em", textTransform: "uppercase", marginTop: "4px" }}>
             LSTM + 5-Strategy Ensemble Engine
           </p>
         </header>
 
         {/* Status bar */}
-        <div className="flex items-center justify-center gap-3 sm:gap-5 my-3 text-xs flex-wrap">
-          <span className={`flex items-center gap-1.5 ${connected ? "text-green-400" : "text-red-400"}`}>
-            <span className={`inline-block w-2 h-2 rounded-full ${connected ? "bg-green-400" : "bg-red-400"} animate-pulse`} />
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "20px", margin: "12px 0", fontSize: "12px", flexWrap: "wrap" }}>
+          <span style={{ display: "flex", alignItems: "center", gap: "6px", color: connected ? "#4ade80" : "#f87171" }}>
+            <span style={{
+              display: "inline-block", width: "8px", height: "8px", borderRadius: "50%",
+              backgroundColor: connected ? "#4ade80" : "#f87171",
+              animation: "pulse 2s infinite",
+            }} />
             {connected ? "Connected" : "Offline"}
           </span>
           {serverInfo && (
             <>
-              <span className="text-gray-400">{serverInfo.main_draws} draws</span>
-              <span className={`flex items-center gap-1.5 ${modelReady ? "text-blue-400" : "text-gray-400"}`}>
-                <span className={`inline-block w-2 h-2 rounded-full ${modelReady ? "bg-blue-400" : "bg-gray-500"} animate-pulse`} />
+              <span style={{ color: "#94a3b8" }}>{serverInfo.main_draws} draws</span>
+              <span style={{ display: "flex", alignItems: "center", gap: "6px", color: modelReady ? "#60a5fa" : "#94a3b8" }}>
+                <span style={{
+                  display: "inline-block", width: "8px", height: "8px", borderRadius: "50%",
+                  backgroundColor: modelReady ? "#60a5fa" : "#6b7280",
+                  animation: "pulse 2s infinite",
+                }} />
                 {modelReady ? "LSTM Ready" : "LSTM Not Trained"}
               </span>
             </>
@@ -336,15 +337,23 @@ export default function LottoMaxAI() {
         </div>
 
         {/* Tabs */}
-        <nav className="flex justify-center gap-1 mb-6 sm:mb-8 border-b border-gray-800 pb-2">
+        <nav style={{ display: "flex", justifyContent: "center", gap: "4px", marginBottom: "32px", borderBottom: "1px solid rgba(255,255,255,0.1)", paddingBottom: "12px" }}>
           {["generate", "analysis", "settings"].map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
-              className={`px-4 sm:px-6 py-2 text-xs uppercase tracking-widest font-bold rounded-t transition-all
-                ${activeTab === tab
-                  ? "bg-gray-800/60 text-gray-100 border border-gray-700 border-b-0"
-                  : "text-gray-400 hover:text-gray-200 border border-transparent"}`}
+              style={{
+                padding: "8px 24px",
+                fontSize: "12px",
+                textTransform: "uppercase",
+                letterSpacing: "0.1em",
+                fontWeight: 700,
+                borderRadius: "8px",
+                cursor: "pointer",
+                border: activeTab === tab ? "1px solid rgba(255,255,255,0.2)" : "1px solid transparent",
+                background: activeTab === tab ? "rgba(255,255,255,0.1)" : "transparent",
+                color: activeTab === tab ? "#ffffff" : "#94a3b8",
+              }}
             >
               {tab}
             </button>
@@ -353,10 +362,17 @@ export default function LottoMaxAI() {
 
         {/* Not connected warning */}
         {!connected && (
-          <div className="border border-red-500/30 bg-red-500/10 rounded-xl p-6 mb-8 text-center">
-            <p className="text-red-400 font-bold mb-2">Server not connected</p>
-            <p className="text-gray-300 text-sm mb-4">Start the backend server:</p>
-            <code className="text-gray-200 bg-gray-900/80 px-4 py-2 rounded text-sm">
+          <div style={{
+            border: "1px solid rgba(239,68,68,0.3)",
+            background: "rgba(239,68,68,0.1)",
+            borderRadius: "12px",
+            padding: "24px",
+            marginBottom: "32px",
+            textAlign: "center",
+          }}>
+            <p style={{ color: "#f87171", fontWeight: 700, marginBottom: "8px" }}>Server not connected</p>
+            <p style={{ color: "#cbd5e1", fontSize: "14px", marginBottom: "16px" }}>Start the backend server:</p>
+            <code style={{ color: "#e2e8f0", background: "rgba(0,0,0,0.4)", padding: "8px 16px", borderRadius: "6px", fontSize: "14px" }}>
               cd backend && python app.py
             </code>
           </div>
@@ -366,69 +382,131 @@ export default function LottoMaxAI() {
         {activeTab === "generate" && connected && (
           <div>
             {/* Control Buttons */}
-            <div className="flex items-center justify-center gap-6 my-8">
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "24px", margin: "32px 0" }}>
               <button
                 onClick={startTraining}
                 disabled={isTraining}
-                className={`px-6 py-3 rounded-xl text-sm font-bold uppercase tracking-wider transition-all
-                  ${isTraining
-                    ? "bg-yellow-500/20 text-yellow-400 border border-yellow-500/30 animate-pulse cursor-wait"
-                    : modelReady
-                      ? "bg-green-500/10 text-green-400 border border-green-500/30 hover:bg-green-500/20"
-                      : "bg-gray-800/60 text-gray-200 border border-gray-600 hover:bg-gray-800"}`}
+                style={{
+                  padding: "12px 24px",
+                  borderRadius: "12px",
+                  fontSize: "14px",
+                  fontWeight: 700,
+                  textTransform: "uppercase",
+                  letterSpacing: "0.05em",
+                  cursor: isTraining ? "wait" : "pointer",
+                  border: "1px solid",
+                  borderColor: isTraining ? "#eab308" : modelReady ? "#22c55e" : "#64748b",
+                  background: isTraining ? "rgba(234,179,8,0.15)" : modelReady ? "rgba(34,197,94,0.1)" : "rgba(255,255,255,0.05)",
+                  color: isTraining ? "#facc15" : modelReady ? "#4ade80" : "#e2e8f0",
+                }}
               >
-                {isTraining ? "Training LSTM..." : modelReady ? "Retrain Model" : "Train LSTM Model"}
+                {isTraining ? "\u23F3 Training LSTM..." : modelReady ? "\u2705 Retrain Model" : "\uD83E\uDDE0 Train LSTM Model"}
               </button>
 
               <button
                 onClick={generate}
-                disabled={isGenerating || !connected}
-                className={`px-8 py-3 rounded-xl text-sm font-bold uppercase tracking-wider transition-all
-                  ${isGenerating
-                    ? "bg-blue-500/20 text-blue-400 border border-blue-500/30 animate-pulse"
-                    : "bg-gradient-to-r from-red-500/80 to-orange-500/80 text-white border border-red-500/30 hover:from-red-500 hover:to-orange-500 shadow-lg shadow-red-500/20"}`}
+                disabled={isGenerating}
+                style={{
+                  padding: "12px 32px",
+                  borderRadius: "12px",
+                  fontSize: "14px",
+                  fontWeight: 700,
+                  textTransform: "uppercase",
+                  letterSpacing: "0.05em",
+                  cursor: isGenerating ? "wait" : "pointer",
+                  border: "1px solid rgba(239,68,68,0.3)",
+                  background: isGenerating ? "rgba(59,130,246,0.15)" : "linear-gradient(135deg, rgba(239,68,68,0.8), rgba(249,115,22,0.8))",
+                  color: "#ffffff",
+                  boxShadow: isGenerating ? "none" : "0 4px 15px rgba(239,68,68,0.2)",
+                }}
               >
-                {isGenerating ? "Analyzing..." : "Generate Numbers"}
+                {isGenerating ? "\u23F3 Analyzing..." : "\uD83C\uDFB0 Generate Numbers"}
               </button>
             </div>
 
             {!modelReady && !isTraining && (
-              <p className="text-center text-gray-400 text-xs mb-6">
+              <p style={{ textAlign: "center", color: "#94a3b8", fontSize: "12px", marginBottom: "24px" }}>
                 Train the LSTM model first for deep learning predictions, or generate with statistical strategies only.
               </p>
             )}
 
             {/* Training Progress / Log */}
             {(isTraining || trainingLog.length > 0) && (
-              <div className="mb-8">
-                <TrainingProgress progress={trainingProgress} log={trainingLog} />
+              <div style={{ marginBottom: "24px" }}>
+                {/* Progress bar */}
+                {trainingProgress.status === "training" && (
+                  <div style={{ padding: "12px 16px", borderBottom: "1px solid rgba(255,255,255,0.1)" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: "12px", color: "#cbd5e1", marginBottom: "8px" }}>
+                      <span>{trainingProgress.strategy}</span>
+                      <span>Epoch {trainingProgress.epoch}/{trainingProgress.total_epochs} &bull; Loss: {trainingProgress.loss}</span>
+                    </div>
+                    <div style={{ width: "100%", height: "6px", background: "rgba(255,255,255,0.05)", borderRadius: "3px", overflow: "hidden" }}>
+                      <div style={{
+                        height: "100%",
+                        borderRadius: "3px",
+                        transition: "all 0.3s",
+                        width: `${(trainingProgress.epoch / trainingProgress.total_epochs) * 100}%`,
+                        background: "linear-gradient(90deg, #3b82f6, #a855f7)",
+                      }} />
+                    </div>
+                  </div>
+                )}
+                {/* Log terminal box */}
+                <div
+                  ref={logRef}
+                  style={{
+                    background: "rgba(0,0,0,0.4)",
+                    border: "1px solid rgba(255,255,255,0.1)",
+                    borderRadius: "12px",
+                    padding: "12px",
+                    maxHeight: "200px",
+                    overflowY: "auto",
+                    fontFamily: "monospace",
+                    fontSize: "12px",
+                  }}
+                >
+                  {trainingLog.map((entry, i) => (
+                    <div key={i} style={{ color: "#94a3b8", padding: "2px 0" }}>
+                      <span style={{ color: "#475569", marginRight: "8px" }}>{entry.time}</span>
+                      <span style={{ color: "#cbd5e1" }}>{entry.msg}</span>
+                    </div>
+                  ))}
+                  {trainingLog.length === 0 && <span style={{ color: "#94a3b8" }}>Waiting for training...</span>}
+                </div>
               </div>
             )}
 
             {/* Prediction Display */}
             {prediction && (
-              <div className="mb-8 space-y-4">
+              <div style={{ marginBottom: "32px" }}>
                 {/* Main Numbers */}
-                <div className="bg-gray-800/40 border border-gray-700 rounded-2xl p-6">
-                  <div className="flex items-center justify-between mb-5">
-                    <h2 className="text-sm font-bold text-gray-100 uppercase tracking-wider">LottoMax Numbers</h2>
-                    <div className="flex items-center gap-2">
+                <div style={{
+                  background: "rgba(255,255,255,0.03)",
+                  border: "1px solid rgba(255,255,255,0.1)",
+                  borderRadius: "16px",
+                  padding: "24px",
+                  marginBottom: "16px",
+                }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "20px" }}>
+                    <h2 style={{ fontSize: "14px", fontWeight: 700, color: "#f1f5f9", textTransform: "uppercase", letterSpacing: "0.05em" }}>LottoMax Numbers</h2>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                       {prediction.model_trained && (
-                        <span className="text-xs bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded">LSTM</span>
+                        <span style={{ fontSize: "12px", background: "rgba(59,130,246,0.2)", color: "#60a5fa", padding: "2px 8px", borderRadius: "4px" }}>LSTM</span>
                       )}
-                      <div className="h-2 rounded-full"
-                        style={{
-                          width: `${prediction.main.confidence}px`,
-                          background: `linear-gradient(90deg, #22c55e, ${prediction.main.confidence > 50 ? "#22c55e" : "#ef4444"})`,
-                        }} />
-                      <span className="text-xs text-gray-300">{prediction.main.confidence}%</span>
+                      <div style={{
+                        height: "8px",
+                        borderRadius: "4px",
+                        width: `${prediction.main.confidence}px`,
+                        background: `linear-gradient(90deg, #22c55e, ${prediction.main.confidence > 50 ? "#22c55e" : "#ef4444"})`,
+                      }} />
+                      <span style={{ fontSize: "12px", color: "#cbd5e1" }}>{prediction.main.confidence}%</span>
                     </div>
                   </div>
 
                   {/* Main ball row - horizontal, no wrapping */}
-                  <div className="flex flex-row items-center justify-center gap-3 flex-nowrap">
+                  <div style={{ display: "flex", flexDirection: "row", alignItems: "center", justifyContent: "center", gap: "12px", flexWrap: "nowrap" }}>
                     {prediction.main.numbers.map((num, i) => (
-                      <div key={num} className="flex flex-col items-center gap-1">
+                      <div key={num} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "4px" }}>
                         <LottoBall number={num} delay={i * 200} isRevealed={true} />
                         {showStrategies && <StrategyBar strategies={prediction.main.strategies} number={num} />}
                       </div>
@@ -437,13 +515,22 @@ export default function LottoMaxAI() {
 
                   <button
                     onClick={() => setShowStrategies(!showStrategies)}
-                    className="mt-4 text-xs text-gray-400 hover:text-gray-200 transition-colors w-full text-center"
+                    style={{
+                      marginTop: "16px",
+                      fontSize: "12px",
+                      color: "#94a3b8",
+                      background: "none",
+                      border: "none",
+                      cursor: "pointer",
+                      width: "100%",
+                      textAlign: "center",
+                    }}
                   >
                     {showStrategies ? "Hide Strategy Breakdown" : "Show Strategy Breakdown"}
                   </button>
 
                   {showStrategies && (
-                    <div className="mt-3 flex justify-center gap-4 text-xs text-gray-300">
+                    <div style={{ marginTop: "12px", display: "flex", justifyContent: "center", gap: "16px", fontSize: "12px", color: "#cbd5e1" }}>
                       {[
                         { label: "LSTM", color: "#ef4444" },
                         { label: "Freq", color: "#3b82f6" },
@@ -451,8 +538,8 @@ export default function LottoMaxAI() {
                         { label: "Pair", color: "#22c55e" },
                         { label: "Dist", color: "#f97316" },
                       ].map((s) => (
-                        <span key={s.label} className="flex items-center gap-1">
-                          <div className="w-2 h-2 rounded-sm" style={{ backgroundColor: s.color }} />
+                        <span key={s.label} style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+                          <div style={{ width: "8px", height: "8px", borderRadius: "2px", backgroundColor: s.color }} />
                           {s.label}
                         </span>
                       ))}
@@ -462,12 +549,17 @@ export default function LottoMaxAI() {
 
                 {/* Extra Numbers */}
                 {prediction.extra && (
-                  <div className="bg-gray-800/40 border border-amber-500/30 rounded-2xl p-6">
-                    <div className="flex items-center justify-between mb-5">
-                      <h2 className="text-sm font-bold text-amber-400 uppercase tracking-wider">Extra Numbers</h2>
-                      <span className="text-xs text-gray-300">{prediction.extra.confidence}%</span>
+                  <div style={{
+                    background: "rgba(255,255,255,0.03)",
+                    border: "1px solid rgba(245,158,11,0.3)",
+                    borderRadius: "16px",
+                    padding: "24px",
+                  }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "20px" }}>
+                      <h2 style={{ fontSize: "14px", fontWeight: 700, color: "#fbbf24", textTransform: "uppercase", letterSpacing: "0.05em" }}>Extra Numbers</h2>
+                      <span style={{ fontSize: "12px", color: "#cbd5e1" }}>{prediction.extra.confidence}%</span>
                     </div>
-                    <div className="flex flex-row items-center justify-center gap-3 flex-nowrap">
+                    <div style={{ display: "flex", flexDirection: "row", alignItems: "center", justifyContent: "center", gap: "12px", flexWrap: "nowrap" }}>
                       {prediction.extra.numbers.map((num, i) => (
                         <LottoBall key={num} number={num} delay={i * 200 + 1400} isExtra={true} isRevealed={true} />
                       ))}
@@ -479,32 +571,44 @@ export default function LottoMaxAI() {
 
             {/* History */}
             {history.length > 0 && (
-              <div className="bg-gray-800/30 border border-gray-700 rounded-2xl p-4 sm:p-5 mb-8">
-                <h3 className="text-sm font-bold text-gray-100 uppercase tracking-wider mb-3">Generation History</h3>
-                <div className="space-y-2">
+              <div style={{
+                background: "rgba(255,255,255,0.02)",
+                border: "1px solid rgba(255,255,255,0.1)",
+                borderRadius: "16px",
+                padding: "16px 20px",
+                marginBottom: "32px",
+              }}>
+                <h3 style={{ fontSize: "14px", fontWeight: 700, color: "#f1f5f9", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "12px" }}>Generation History</h3>
+                <div>
                   {history.map((h, idx) => (
-                    <div key={h.id}
-                      className={`flex items-center gap-2 sm:gap-3 py-2 px-3 rounded-lg transition-all
-                        ${idx === 0 ? "bg-gray-700/30" : "opacity-60 hover:opacity-90"}`}>
-                      <span className="text-xs text-gray-400 w-16 flex-shrink-0">{h.time}</span>
-                      <div className="flex flex-row items-center gap-1.5 flex-nowrap">
+                    <div key={h.id} style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "8px",
+                      padding: "8px 12px",
+                      borderRadius: "8px",
+                      background: idx === 0 ? "rgba(255,255,255,0.05)" : "transparent",
+                      opacity: idx === 0 ? 1 : 0.6,
+                    }}>
+                      <span style={{ fontSize: "12px", color: "#94a3b8", width: "70px", flexShrink: 0 }}>{h.time}</span>
+                      <div style={{ display: "flex", flexDirection: "row", gap: "4px", flexWrap: "nowrap" }}>
                         {h.main.map((n) => (
                           <LottoBall key={n} number={n} size="sm" isRevealed={true} delay={0} />
                         ))}
                       </div>
                       {h.extra && (
                         <>
-                          <span className="text-gray-400 text-xs flex-shrink-0">+</span>
-                          <div className="flex flex-row items-center gap-1.5 flex-nowrap">
+                          <span style={{ color: "#64748b", fontSize: "12px" }}>+</span>
+                          <div style={{ display: "flex", flexDirection: "row", gap: "4px", flexWrap: "nowrap" }}>
                             {h.extra.map((n) => (
                               <LottoBall key={n} number={n} size="sm" isExtra={true} isRevealed={true} delay={0} />
                             ))}
                           </div>
                         </>
                       )}
-                      <div className="ml-auto flex items-center gap-2 flex-shrink-0">
-                        {h.modelTrained && <span className="text-xs text-blue-400">LSTM</span>}
-                        <span className="text-xs text-gray-300">{h.confidence}%</span>
+                      <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "8px", flexShrink: 0 }}>
+                        {h.modelTrained && <span style={{ fontSize: "12px", color: "#60a5fa" }}>LSTM</span>}
+                        <span style={{ fontSize: "12px", color: "#94a3b8" }}>{h.confidence}%</span>
                       </div>
                     </div>
                   ))}
@@ -528,31 +632,31 @@ export default function LottoMaxAI() {
                 )}
 
                 {/* Hot & Cold */}
-                <div className="mt-8 grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="bg-gray-800/40 border border-gray-700 rounded-xl p-4">
-                    <h3 className="text-sm font-bold text-red-400 uppercase tracking-wider mb-3">Hot Numbers</h3>
-                    <div className="flex flex-row flex-wrap gap-2">
+                <div style={{ marginTop: "32px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
+                  <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "12px", padding: "16px" }}>
+                    <h3 style={{ fontSize: "14px", fontWeight: 700, color: "#f87171", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "12px" }}>Hot Numbers</h3>
+                    <div style={{ display: "flex", flexDirection: "row", flexWrap: "wrap", gap: "8px", alignItems: "center" }}>
                       {Object.entries(frequencies.main_recent)
                         .sort((a, b) => b[1] - a[1])
                         .slice(0, 10)
                         .map(([n, freq]) => (
-                          <div key={n} className="flex items-center gap-1">
+                          <div key={n} style={{ display: "flex", alignItems: "center", gap: "4px" }}>
                             <LottoBall number={parseInt(n)} size="sm" isRevealed={true} delay={0} />
-                            <span className="text-xs text-gray-300">{freq}</span>
+                            <span style={{ fontSize: "11px", color: "#94a3b8" }}>{freq}</span>
                           </div>
                         ))}
                     </div>
                   </div>
-                  <div className="bg-gray-800/40 border border-gray-700 rounded-xl p-4">
-                    <h3 className="text-sm font-bold text-blue-400 uppercase tracking-wider mb-3">Cold Numbers</h3>
-                    <div className="flex flex-row flex-wrap gap-2">
+                  <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "12px", padding: "16px" }}>
+                    <h3 style={{ fontSize: "14px", fontWeight: 700, color: "#60a5fa", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "12px" }}>Cold Numbers</h3>
+                    <div style={{ display: "flex", flexDirection: "row", flexWrap: "wrap", gap: "8px", alignItems: "center" }}>
                       {Object.entries(frequencies.main_recent)
                         .sort((a, b) => a[1] - b[1])
                         .slice(0, 10)
                         .map(([n, freq]) => (
-                          <div key={n} className="flex items-center gap-1">
+                          <div key={n} style={{ display: "flex", alignItems: "center", gap: "4px" }}>
                             <LottoBall number={parseInt(n)} size="sm" isRevealed={true} delay={0} />
-                            <span className="text-xs text-gray-300">{freq}</span>
+                            <span style={{ fontSize: "11px", color: "#94a3b8" }}>{freq}</span>
                           </div>
                         ))}
                     </div>
@@ -560,58 +664,57 @@ export default function LottoMaxAI() {
                 </div>
 
                 {/* Overdue */}
-                <div className="mt-4 bg-gray-800/40 border border-gray-700 rounded-xl p-4">
-                  <h3 className="text-sm font-bold text-purple-400 uppercase tracking-wider mb-3">Most Overdue</h3>
-                  <div className="flex flex-row flex-wrap gap-2">
+                <div style={{ marginTop: "16px", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "12px", padding: "16px" }}>
+                  <h3 style={{ fontSize: "14px", fontWeight: 700, color: "#c084fc", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "12px" }}>Most Overdue</h3>
+                  <div style={{ display: "flex", flexDirection: "row", flexWrap: "wrap", gap: "8px", alignItems: "center" }}>
                     {Object.entries(frequencies.main_gaps)
                       .sort((a, b) => b[1] - a[1])
                       .slice(0, 10)
                       .map(([n, gap]) => (
-                        <div key={n} className="flex items-center gap-1">
+                        <div key={n} style={{ display: "flex", alignItems: "center", gap: "4px" }}>
                           <LottoBall number={parseInt(n)} size="sm" isRevealed={true} delay={0} />
-                          <span className="text-xs text-gray-300">{gap}d</span>
+                          <span style={{ fontSize: "11px", color: "#94a3b8" }}>{gap}d</span>
                         </div>
                       ))}
                   </div>
                 </div>
               </>
             ) : (
-              <p className="text-center text-gray-400">Loading analysis...</p>
+              <p style={{ textAlign: "center", color: "#94a3b8" }}>Loading analysis...</p>
             )}
           </div>
         )}
 
         {/* ===================== SETTINGS TAB ===================== */}
         {activeTab === "settings" && (
-          <div className="space-y-6">
+          <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
             {/* Training Settings */}
-            <div className="bg-gray-800/40 border border-gray-700 rounded-2xl p-6">
-              <h3 className="text-sm font-bold text-gray-100 uppercase tracking-wider mb-4">Training Settings</h3>
-              <div className="mb-4">
-                <label className="text-sm text-gray-200 block mb-2">LSTM Training Epochs</label>
+            <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "16px", padding: "24px" }}>
+              <h3 style={{ fontSize: "14px", fontWeight: 700, color: "#f1f5f9", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "16px" }}>Training Settings</h3>
+              <div style={{ marginBottom: "16px" }}>
+                <label style={{ fontSize: "14px", color: "#e2e8f0", display: "block", marginBottom: "8px" }}>LSTM Training Epochs</label>
                 <input
                   type="range" min="20" max="300" value={epochs}
                   onChange={(e) => setEpochs(parseInt(e.target.value))}
-                  className="w-full h-1 rounded-lg appearance-none cursor-pointer"
-                  style={{ accentColor: "#3b82f6" }}
+                  style={{ width: "100%", height: "4px", borderRadius: "4px", appearance: "none", cursor: "pointer", accentColor: "#3b82f6" }}
                 />
-                <div className="flex justify-between text-xs text-gray-400 mt-1">
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: "12px", color: "#94a3b8", marginTop: "4px" }}>
                   <span>Fast (20)</span>
-                  <span className="text-white font-bold">{epochs}</span>
+                  <span style={{ color: "#ffffff", fontWeight: 700 }}>{epochs}</span>
                   <span>Deep (300)</span>
                 </div>
               </div>
-              <p className="text-xs text-gray-400">
+              <p style={{ fontSize: "12px", color: "#94a3b8" }}>
                 More epochs = deeper pattern learning but longer training time.
                 Early stopping prevents overfitting.
               </p>
             </div>
 
             {/* Strategy Weights */}
-            <div className="bg-gray-800/40 border border-gray-700 rounded-2xl p-6">
-              <h3 className="text-sm font-bold text-gray-100 uppercase tracking-wider mb-4">Strategy Weights</h3>
-              <p className="text-xs text-gray-400 mb-4">
-                Adjust each strategy's influence. LSTM gets highest default weight for deep pattern detection.
+            <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "16px", padding: "24px" }}>
+              <h3 style={{ fontSize: "14px", fontWeight: 700, color: "#f1f5f9", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "16px" }}>Strategy Weights</h3>
+              <p style={{ fontSize: "12px", color: "#94a3b8", marginBottom: "16px" }}>
+                Adjust each strategy&apos;s influence. LSTM gets highest default weight for deep pattern detection.
               </p>
               {[
                 { key: "lstm", label: "LSTM Deep Learning", color: "#ef4444", desc: "Neural network sequential pattern detection" },
@@ -620,30 +723,29 @@ export default function LottoMaxAI() {
                 { key: "pair", label: "Pair Correlation", color: "#22c55e", desc: "Numbers that appear together frequently" },
                 { key: "distribution", label: "Distribution Balance", color: "#f97316", desc: "Range & odd/even equilibrium" },
               ].map((s) => (
-                <div key={s.key} className="mb-4">
-                  <div className="flex items-center justify-between mb-1">
-                    <div className="flex items-center gap-2">
-                      <div className="w-2 h-2 rounded-full" style={{ backgroundColor: s.color }} />
-                      <span className="text-sm text-gray-200">{s.label}</span>
+                <div key={s.key} style={{ marginBottom: "16px" }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "4px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                      <div style={{ width: "8px", height: "8px", borderRadius: "50%", backgroundColor: s.color }} />
+                      <span style={{ fontSize: "14px", color: "#e2e8f0" }}>{s.label}</span>
                     </div>
-                    <span className="text-sm text-gray-300 font-mono">{weights[s.key].toFixed(2)}</span>
+                    <span style={{ fontSize: "14px", color: "#cbd5e1", fontFamily: "monospace" }}>{weights[s.key].toFixed(2)}</span>
                   </div>
                   <input
                     type="range" min="0" max="100" value={weights[s.key] * 100}
                     onChange={(e) => setWeights((prev) => ({ ...prev, [s.key]: parseInt(e.target.value) / 100 }))}
-                    className="w-full h-1 rounded-lg appearance-none cursor-pointer"
-                    style={{ accentColor: s.color }}
+                    style={{ width: "100%", height: "4px", borderRadius: "4px", appearance: "none", cursor: "pointer", accentColor: s.color }}
                   />
-                  <p className="text-xs text-gray-400 mt-0.5">{s.desc}</p>
+                  <p style={{ fontSize: "12px", color: "#94a3b8", marginTop: "2px" }}>{s.desc}</p>
                 </div>
               ))}
-              <div className="flex justify-between items-center pt-3 border-t border-gray-700">
-                <span className="text-xs text-gray-400">
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: "12px", borderTop: "1px solid rgba(255,255,255,0.1)" }}>
+                <span style={{ fontSize: "12px", color: "#94a3b8" }}>
                   Total: {Object.values(weights).reduce((a, b) => a + b, 0).toFixed(2)}
                 </span>
                 <button
                   onClick={() => setWeights({ lstm: 0.30, frequency: 0.20, gap: 0.20, pair: 0.15, distribution: 0.15 })}
-                  className="text-xs text-gray-400 hover:text-white transition-colors"
+                  style={{ fontSize: "12px", color: "#94a3b8", background: "none", border: "none", cursor: "pointer" }}
                 >
                   Reset defaults
                 </button>
@@ -651,25 +753,34 @@ export default function LottoMaxAI() {
             </div>
 
             {/* Server Info */}
-            <div className="bg-gray-800/40 border border-gray-700 rounded-2xl p-6">
-              <h3 className="text-sm font-bold text-gray-100 uppercase tracking-wider mb-4">Server Info</h3>
+            <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "16px", padding: "24px" }}>
+              <h3 style={{ fontSize: "14px", fontWeight: 700, color: "#f1f5f9", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "16px" }}>Server Info</h3>
               {serverInfo ? (
-                <div className="text-xs text-gray-300 space-y-1">
+                <div style={{ fontSize: "12px", color: "#cbd5e1", display: "flex", flexDirection: "column", gap: "4px" }}>
                   <p>Main draws: {serverInfo.main_draws}</p>
                   <p>Extra draws: {serverInfo.extra_draws}</p>
-                  <p>Main model: <span className={serverInfo.main_model_loaded ? "text-green-400" : "text-red-400"}>{serverInfo.main_model_loaded ? "Loaded" : "Not trained"}</span></p>
-                  <p>Extra model: <span className={serverInfo.extra_model_loaded ? "text-green-400" : "text-red-400"}>{serverInfo.extra_model_loaded ? "Loaded" : "Not trained"}</span></p>
+                  <p>Main model: <span style={{ color: serverInfo.main_model_loaded ? "#4ade80" : "#f87171" }}>{serverInfo.main_model_loaded ? "Loaded" : "Not trained"}</span></p>
+                  <p>Extra model: <span style={{ color: serverInfo.extra_model_loaded ? "#4ade80" : "#f87171" }}>{serverInfo.extra_model_loaded ? "Loaded" : "Not trained"}</span></p>
                   {serverInfo.last_trained && <p>Last trained: {new Date(serverInfo.last_trained).toLocaleString()}</p>}
                 </div>
               ) : (
-                <p className="text-xs text-gray-400">Not connected</p>
+                <p style={{ fontSize: "12px", color: "#94a3b8" }}>Not connected</p>
               )}
               <button
                 onClick={async () => {
                   await fetch(`${API}/reload-data`, { method: "POST" });
                   checkServer();
                 }}
-                className="mt-3 px-4 py-2 bg-gray-700/50 border border-gray-600 rounded-lg text-xs text-gray-200 hover:bg-gray-700 transition-all"
+                style={{
+                  marginTop: "12px",
+                  padding: "8px 16px",
+                  background: "rgba(255,255,255,0.05)",
+                  border: "1px solid rgba(255,255,255,0.15)",
+                  borderRadius: "8px",
+                  fontSize: "12px",
+                  color: "#e2e8f0",
+                  cursor: "pointer",
+                }}
               >
                 Reload CSV Data
               </button>
@@ -678,9 +789,9 @@ export default function LottoMaxAI() {
         )}
 
         {/* Footer */}
-        <footer className="mt-12 text-center text-gray-400 text-xs">
+        <footer style={{ marginTop: "48px", textAlign: "center", fontSize: "12px", color: "#94a3b8" }}>
           <p>LottoMax AI — LSTM + 5-Strategy Ensemble Engine</p>
-          <p className="mt-1 text-gray-400">For entertainment purposes. Lottery outcomes are not guaranteed.</p>
+          <p style={{ marginTop: "4px", color: "#94a3b8" }}>For entertainment purposes. Lottery outcomes are not guaranteed.</p>
         </footer>
       </div>
     </div>
