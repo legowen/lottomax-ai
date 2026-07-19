@@ -22,6 +22,7 @@ matches of a random ticket. The only real lever is EV optimization.
 
 import os
 import json
+import math
 import time
 import struct
 import logging
@@ -120,14 +121,22 @@ def load_csv_data():
     df = pd.read_csv(main_path)
     # Only main draws (SEQUENCE NUMBER == 0)
     df_main = df[df["SEQUENCE NUMBER"] == 0].sort_values("DRAW NUMBER")
+    era2_ts = pd.Timestamp(ERA2_START_DATE)
     all_draws, era_draws, era_dated = [], [], []
+    bad_dates = 0
     for _, row in df_main.iterrows():
         nums = [int(row[f"NUMBER DRAWN {i}"]) for i in range(1, 8)]
         date_str = str(row.get("DRAW DATE", "")).strip().strip('"')
         all_draws.append(nums)
-        if date_str >= ERA2_START_DATE:
+        parsed = pd.to_datetime(date_str, format="%Y-%m-%d", errors="coerce")
+        if pd.isna(parsed):
+            bad_dates += 1
+            continue  # unparseable date: keep out of era-2 statistics
+        if parsed >= era2_ts:
             era_draws.append(nums)
             era_dated.append({"numbers": nums, "date": date_str})
+    if bad_dates:
+        logger.warning(f"{bad_dates} draws had unparseable dates and were excluded from era-2 stats")
 
     state["all_draws"] = all_draws
     state["main_draws"] = era_draws
@@ -652,7 +661,15 @@ def apply_ev_guard(ranked: list, pick_count: int, historical_sets=None,
             continue
         pick.append(n)
 
-    # Fallback: if the constraints exhausted the pool, fill by rank
+    # Fallback (constraints unsatisfiable with this pool): relax the
+    # low-number cap first, and only as a last resort allow runs too
+    if len(pick) < pick_count:
+        for n in ranked:
+            if len(pick) == pick_count:
+                break
+            if n in pick or _has_triple_run(pick + [n]):
+                continue
+            pick.append(n)
     for n in ranked:
         if len(pick) == pick_count:
             break
@@ -682,9 +699,12 @@ def normalize(arr: np.ndarray) -> np.ndarray:
     if len(positive) == 0:
         return arr
     mn, mx = positive.min(), positive.max()
-    if mx == mn:
-        return arr
     result = np.zeros_like(arr)
+    if mx == mn:
+        # All positive scores equal: map to 1.0 so raw magnitudes
+        # never leak into the weighted ensemble at their own scale
+        result[1:][valid > 0] = 1.0
+        return result
     for i in range(1, len(arr)):
         if arr[i] > 0:
             result[i] = (arr[i] - mn) / (mx - mn)
@@ -758,15 +778,25 @@ def ensemble_predict(
             "total": round(float(combined[num]), 3),
         }
 
+    total_weight = sum(w.get(k, 0) for k in DEFAULT_WEIGHTS)
+    if total_weight <= 0:
+        confidence = 0  # nothing but jitter drove the pick — it is pure random
+
     low_count = sum(1 for n in selected if n <= 31)
+    is_past_winner = frozenset(selected) in (historical_sets or set())
     ev_info = {
         "low_count": low_count,
         "max_low": EV_MAX_LOW_NUMBERS,
         "sum": int(sum(selected)),
         "guard_applied": guard_active,
-        "is_past_winner": frozenset(selected) in (historical_sets or set()),
-        "share_risk": "low" if guard_active and low_count <= EV_MAX_LOW_NUMBERS else "high",
+        "is_past_winner": is_past_winner,
+        "share_risk": "low" if (guard_active
+                                and low_count <= EV_MAX_LOW_NUMBERS
+                                and not is_past_winner
+                                and not _has_triple_run(selected)) else "high",
     }
+    if total_weight <= 0:
+        ev_info["note"] = "all strategy weights are zero — this pick is uniform random"
 
     return {"numbers": selected, "confidence": confidence, "strategies": strategies, "ev_info": ev_info}
 
@@ -836,6 +866,9 @@ async def train(req: TrainRequest, background_tasks: BackgroundTasks):
     if len(state["main_draws"]) == 0:
         raise HTTPException(400, "No data loaded")
 
+    # Claim the flag before returning: prevents two rapid POST /train
+    # requests from both passing the check and training concurrently
+    state["is_training"] = True
     background_tasks.add_task(run_training, req.epochs)
     return {"status": "training_started", "epochs": req.epochs}
 
@@ -893,12 +926,30 @@ class PredictRequest(BaseModel):
     weights: Optional[dict] = None
 
 
+def sanitize_weights(weights: Optional[dict]) -> Optional[dict]:
+    """Validate user-supplied strategy weights: known keys, finite numbers, clamped to [0, 10]."""
+    if not weights:
+        return None
+    clean = {}
+    for key in DEFAULT_WEIGHTS:
+        if key not in weights:
+            continue
+        try:
+            v = float(weights[key])
+        except (TypeError, ValueError):
+            raise HTTPException(422, f"weight '{key}' must be a number")
+        if math.isnan(v) or math.isinf(v):
+            raise HTTPException(422, f"weight '{key}' must be finite")
+        clean[key] = min(max(v, 0.0), 10.0)
+    return clean or None
+
+
 @app.post("/predict")
 def predict(req: PredictRequest = None):
     if len(state["main_draws"]) == 0:
         raise HTTPException(400, "No data loaded")
 
-    weights = req.weights if req else None
+    weights = sanitize_weights(req.weights if req else None)
 
     main_result = ensemble_predict(
         state["main_draws"], LOTTO_MAX, LOTTO_PICK,
@@ -997,9 +1048,18 @@ def backtest(req: BacktestRequest = None):
         "distribution": lambda d: strategy_distribution(d, LOTTO_MAX),
         "smart": lambda d: strategy_smart_pick(LOTTO_MAX),
     }
+
+    def guarded_selector(scores, pick_count):
+        # Mirror production selection: rank by score, then apply the EV guard
+        ranked = sorted(range(1, len(scores)), key=lambda n: -scores[n])
+        return set(apply_ev_guard(ranked, pick_count, state["historical_sets"]))
+
     results = run_walk_forward(
         draws, LOTTO_MAX, LOTTO_PICK, strategies,
         window=window, n_random=n_random,
+        selectors={"smart": guarded_selector},
+        ensemble_weights={k: DEFAULT_WEIGHTS.get(k, 0) for k in strategies},
+        ensemble_selector=guarded_selector,
     )
     state["backtest"] = results
     return results

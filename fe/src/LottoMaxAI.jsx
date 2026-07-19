@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 
 // ============================================================
 // LottoMax AI - Frontend
-// Connects to FastAPI backend with real LSTM 6-Strategy ensemble
+// Connects to FastAPI backend with real LSTM 7-Strategy ensemble
 // ============================================================
 
 const API = "http://localhost:8000";
@@ -61,13 +61,13 @@ function StrategyBar({ strategies, number }) {
   if (!strategies || !strategies[String(number)]) return null;
   const s = strategies[String(number)];
   const items = [
-    { key: "LSTM", val: s.lstm, color: "#ef4444" },
-    { key: "Freq", val: s.frequency, color: "#3b82f6" },
-    { key: "Gap", val: s.gap, color: "#a855f7" },
-    { key: "Pair", val: s.pair, color: "#22c55e" },
-    { key: "Dist", val: s.distribution, color: "#f97316" },
-    { key: "Seed", val: s.seed, color: "#facc15" },
-    { key: "Smart", val: s.smart, color: "#14b8a6" },
+    { key: "LSTM", val: s.lstm ?? 0, color: "#ef4444" },
+    { key: "Freq", val: s.frequency ?? 0, color: "#3b82f6" },
+    { key: "Gap", val: s.gap ?? 0, color: "#a855f7" },
+    { key: "Pair", val: s.pair ?? 0, color: "#22c55e" },
+    { key: "Dist", val: s.distribution ?? 0, color: "#f97316" },
+    { key: "Seed", val: s.seed ?? 0, color: "#facc15" },
+    { key: "Smart", val: s.smart ?? 0, color: "#14b8a6" },
   ];
 
   return (
@@ -231,6 +231,11 @@ export default function LottoMaxAI() {
         body: JSON.stringify({ weights }),
       });
       const data = await res.json();
+      if (!res.ok) {
+        alert(data.detail || "Prediction failed");
+        setIsGenerating(false);
+        return;
+      }
       setPrediction(data);
 
       setHistory((prev) => [
@@ -254,6 +259,7 @@ export default function LottoMaxAI() {
   const loadFrequencies = async () => {
     try {
       const res = await fetch(`${API}/frequencies`);
+      if (!res.ok) return;
       const data = await res.json();
       setFrequencies(data);
     } catch {
@@ -271,7 +277,7 @@ export default function LottoMaxAI() {
         body: JSON.stringify({ window: 150, random_tickets: 100 }),
       });
       const data = await res.json();
-      setBacktest(data);
+      if (res.ok) setBacktest(data);
     } catch {
       // ignore
     }
@@ -287,7 +293,7 @@ export default function LottoMaxAI() {
         body: JSON.stringify({ max_draws: 20 }),
       });
       const data = await res.json();
-      setSeedAnalysis(data);
+      if (res.ok) setSeedAnalysis(data);
     } catch {
       // ignore
     }
@@ -394,7 +400,7 @@ export default function LottoMaxAI() {
             <p style={{ color: "#f87171", fontWeight: 700, marginBottom: "8px" }}>Server not connected</p>
             <p style={{ color: "#cbd5e1", fontSize: "14px", marginBottom: "16px" }}>Start the backend server:</p>
             <code style={{ color: "#e2e8f0", background: "rgba(0,0,0,0.4)", padding: "8px 16px", borderRadius: "6px", fontSize: "14px" }}>
-              cd backend && python app.py
+              cd be && python app.py
             </code>
           </div>
         )}
@@ -677,7 +683,7 @@ export default function LottoMaxAI() {
                       .map(([n, gap]) => (
                         <div key={n} style={{ display: "flex", alignItems: "center", gap: "4px" }}>
                           <LottoBall number={parseInt(n)} size="sm" isRevealed={true} delay={0} />
-                          <span style={{ fontSize: "11px", color: "#94a3b8" }}>{gap}d</span>
+                          <span style={{ fontSize: "11px", color: "#94a3b8" }}>{gap} draws</span>
                         </div>
                       ))}
                   </div>

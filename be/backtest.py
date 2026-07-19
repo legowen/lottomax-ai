@@ -17,10 +17,12 @@ def _normalize(arr: np.ndarray) -> np.ndarray:
     positive = valid[valid > 0]
     if len(positive) == 0:
         return arr
+    result = np.zeros_like(arr)
     mn, mx = positive.min(), positive.max()
     if mx == mn:
-        return arr
-    result = np.zeros_like(arr)
+        # All positive scores equal: map to 1.0 (mirror app.normalize)
+        result[1:][valid > 0] = 1.0
+        return result
     nz = arr > 0
     result[nz] = (arr[nz] - mn) / (mx - mn)
     result[0] = 0
@@ -51,18 +53,27 @@ def _summary(match_list, expected: float) -> dict:
 
 
 def run_walk_forward(draws: list, num_range: int, pick: int, strategies: dict,
-                     window: int = 150, n_random: int = 100, seed: int = 42) -> dict:
+                     window: int = 150, n_random: int = 100, seed: int = 42,
+                     selectors: dict = None, ensemble_weights: dict = None,
+                     ensemble_selector=None) -> dict:
     """
     draws: full ordered draw history (list of 7-number lists)
     strategies: {name: fn(history_draws) -> score array of len num_range+1}
-    Returns per-strategy summaries plus an equal-weight ensemble and a
-    random-ticket baseline.
+    selectors: optional {name: fn(scores, pick) -> set} overriding the plain
+        top-N pick, so a strategy's real selection logic (e.g. the EV guard)
+        is what gets backtested
+    ensemble_weights: optional {name: weight}; defaults to equal weight.
+        Pass the production weights so the "ensemble" row measures the
+        predictor the app actually ships (minus LSTM and jitter).
+    ensemble_selector: optional fn(scores, pick) -> set for the ensemble row
+    Returns per-strategy summaries plus the ensemble and a random baseline.
     """
     total = len(draws)
     window = max(10, min(window, total - 30))
     start = total - window
     expected = pick * pick / num_range
     rng = np.random.default_rng(seed)
+    selectors = selectors or {}
 
     matches = {name: [] for name in strategies}
     matches["ensemble"] = []
@@ -75,10 +86,16 @@ def run_walk_forward(draws: list, num_range: int, pick: int, strategies: dict,
         for name, fn in strategies.items():
             scores = fn(history)
             raw[name] = scores
-            matches[name].append(len(_top_pick(scores, pick) & actual))
+            select = selectors.get(name, _top_pick)
+            matches[name].append(len(select(scores, pick) & actual))
 
-        ens = sum(_normalize(raw[name].copy()) for name in strategies) / len(strategies)
-        matches["ensemble"].append(len(_top_pick(ens, pick) & actual))
+        if ensemble_weights:
+            ens = sum(_normalize(raw[name].copy()) * ensemble_weights.get(name, 0)
+                      for name in strategies)
+        else:
+            ens = sum(_normalize(raw[name].copy()) for name in strategies) / len(strategies)
+        ens_select = ensemble_selector or _top_pick
+        matches["ensemble"].append(len(ens_select(ens, pick) & actual))
 
         hits = 0
         for _ in range(n_random):

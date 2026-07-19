@@ -210,3 +210,68 @@ def test_api_backtest(client):
 def test_api_reload(client):
     r = client.post("/reload-data").json()
     assert r["main_draws"] == 708 and r["all_draws"] == 1211
+
+
+# ---------------- adversarial regression tests (Stage 3) ----------------
+
+def test_api_rejects_non_numeric_weights(client):
+    r = client.post("/predict", json={"weights": {"smart": "high"}})
+    assert r.status_code == 422
+
+
+def test_api_rejects_nan_weight(client):
+    r = client.post("/predict", json={"weights": {"gap": "nan"}})
+    assert r.status_code == 422
+
+
+def test_api_clamps_extreme_weights(client):
+    r = client.post("/predict", json={"weights": {"smart": -5, "gap": 999}})
+    assert r.status_code == 200
+    assert len(r.json()["main"]["numbers"]) == 7
+
+
+def test_api_all_zero_weights_confidence_zero(client):
+    zero = {k: 0 for k in lotto.DEFAULT_WEIGHTS}
+    r = client.post("/predict", json={"weights": zero}).json()
+    assert r["main"]["confidence"] == 0
+    assert "note" in r["main"]["ev_info"]
+
+
+def test_api_train_rejected_while_training(client):
+    lotto.state["is_training"] = True
+    try:
+        r = client.post("/train", json={"epochs": 1})
+        assert r.status_code == 400
+    finally:
+        lotto.state["is_training"] = False
+
+
+def test_normalize_constant_scores_capped():
+    # All-equal positive scores must map to 1.0, never leak raw magnitude
+    arr = np.zeros(51)
+    arr[1:] = 500.0
+    out = lotto.normalize(arr.copy())
+    assert out[1:].max() == 1.0 and out[1:].min() == 1.0
+    assert np.allclose(out, _normalize(arr.copy()))
+
+
+def test_smart_selection_respects_guard(loaded):
+    # The backtested smart pick must use the same EV guard production uses
+    scores = lotto.strategy_smart_pick(50)
+    ranked = sorted(range(1, 51), key=lambda n: -scores[n])
+    pick = lotto.apply_ev_guard(ranked, 7, loaded["historical_sets"])
+    assert not lotto._has_triple_run(pick)
+    assert sum(1 for n in pick if n <= 31) <= lotto.EV_MAX_LOW_NUMBERS
+    assert frozenset(pick) not in loaded["historical_sets"]
+
+
+def test_share_risk_reflects_past_winner(loaded):
+    past = next(iter(loaded["historical_sets"]))
+    # Force a scenario where the pick equals a past winner via guard bypass
+    r = lotto.ensemble_predict(loaded["main_draws"], 50, 7, None,
+                               {"frequency": 1.0}, historical_sets=loaded["historical_sets"])
+    ev = r["ev_info"]
+    if ev["is_past_winner"] or lotto._has_triple_run(r["numbers"]):
+        assert ev["share_risk"] == "high"
+    assert ev["guard_applied"] is False  # smart weight 0 -> guard off -> risk high
+    assert ev["share_risk"] == "high"
