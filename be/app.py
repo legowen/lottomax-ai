@@ -1,5 +1,5 @@
 """
-LottoMax AI - 6-Strategy Ensemble Prediction Engine
+LottoMax AI - 7-Strategy Ensemble Prediction Engine
 ====================================================
 Backend: FastAPI + TensorFlow LSTM + Statistical Analysis
 
@@ -10,10 +10,19 @@ Strategies:
 4. Pair Correlation - Co-occurrence patterns
 5. Distribution Balance - Range & odd/even equilibrium
 6. Seed/RNG Analysis - Time-based PRNG reverse engineering
+   (kept for transparency; backtests show no predictive power, default weight 0)
+7. Smart Pick (EV) - Expected-value optimization: avoid popular
+   combinations so a winning ticket shares the pari-mutuel prize
+   with fewer people. Does not change win probability.
+
+Honesty note (docs/RESEARCH.md): the draw history passes every
+randomness test, and no strategy beats the 7*7/50 = 0.98 expected
+matches of a random ticket. The only real lever is EV optimization.
 """
 
 import os
 import json
+import math
 import time
 import struct
 import logging
@@ -28,11 +37,17 @@ from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-import tensorflow as tf
-from tensorflow import keras
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import LSTM, Dense, Dropout, Bidirectional, BatchNormalization
-from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
+try:
+    from tensorflow import keras
+    from tensorflow.keras.models import Sequential
+    from tensorflow.keras.layers import LSTM, Dense, Dropout, Bidirectional, BatchNormalization
+    from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
+    TF_AVAILABLE = True
+except ImportError:
+    keras = None
+    TF_AVAILABLE = False
+
+from backtest import run_walk_forward
 
 # ============================================================
 # Config
@@ -47,13 +62,28 @@ SEQUENCE_LENGTH = 20  # How many past draws the LSTM looks at
 HOT_COLD_WINDOW = 50
 RECENT_WINDOW = 30
 
+# 2019-05-14: LottoMax switched from 7/49 weekly to 7/50 twice a week.
+# Statistics computed across that boundary are biased (e.g. number 50
+# only exists after it), so all strategies use era-2 draws only.
+ERA2_START_DATE = "2019-05-14"
+
+# Overpicked "lucky" numbers (players' favourites — bad for EV)
+LUCKY_NUMBERS = {3, 7, 11, 13}
+# Numbers <= 31 are birthday-biased; cap how many the final pick may contain
+EV_MAX_LOW_NUMBERS = 4
+
+DEFAULT_WEIGHTS = {
+    "lstm": 0.15, "frequency": 0.15, "gap": 0.20, "pair": 0.05,
+    "distribution": 0.15, "seed": 0.00, "smart": 0.30,
+}
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("lottomax-ai")
 
 # ============================================================
 # App
 # ============================================================
-app = FastAPI(title="LottoMax AI", version="3.0")
+app = FastAPI(title="LottoMax AI", version="4.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -63,14 +93,17 @@ app.add_middleware(
 
 # Global state
 state = {
-    "main_draws": [],
-    "main_draws_dated": [],
+    "main_draws": [],        # era-2 draws only (7/50) — used by all strategies
+    "all_draws": [],         # full history incl. 7/49 era, for reference
+    "main_draws_dated": [],  # era-2 draws with dates
+    "historical_sets": set(),  # frozensets of every past winning combo (full history)
     "main_model": None,
     "is_training": False,
     "training_progress": {"status": "idle", "epoch": 0, "total_epochs": 0, "loss": 0, "strategy": ""},
     "training_log": [],
     "last_trained": None,
     "seed_analysis": None,
+    "backtest": None,
 }
 
 
@@ -78,35 +111,47 @@ state = {
 # Data Loading
 # ============================================================
 def load_csv_data():
-    """Load LottoMax CSV file."""
+    """Load LottoMax CSV file, splitting at the 7/49 -> 7/50 era boundary."""
     main_path = DATA_DIR / "LOTTOMAX.csv"
 
-    if main_path.exists():
-        df = pd.read_csv(main_path)
-        # Only main draws (SEQUENCE NUMBER == 0)
-        df_main = df[df["SEQUENCE NUMBER"] == 0].sort_values("DRAW NUMBER")
-        draws = []
-        for _, row in df_main.iterrows():
-            nums = [int(row[f"NUMBER DRAWN {i}"]) for i in range(1, 8)]
-            draws.append(nums)
-        state["main_draws"] = draws
-        logger.info(f"Loaded {len(draws)} main draws")
-    else:
+    if not main_path.exists():
         logger.warning(f"Main CSV not found at {main_path}")
+        return
+
+    df = pd.read_csv(main_path)
+    # Only main draws (SEQUENCE NUMBER == 0)
+    df_main = df[df["SEQUENCE NUMBER"] == 0].sort_values("DRAW NUMBER")
+    era2_ts = pd.Timestamp(ERA2_START_DATE)
+    all_draws, era_draws, era_dated = [], [], []
+    bad_dates = 0
+    for _, row in df_main.iterrows():
+        nums = [int(row[f"NUMBER DRAWN {i}"]) for i in range(1, 8)]
+        date_str = str(row.get("DRAW DATE", "")).strip().strip('"')
+        all_draws.append(nums)
+        parsed = pd.to_datetime(date_str, format="%Y-%m-%d", errors="coerce")
+        if pd.isna(parsed):
+            bad_dates += 1
+            continue  # unparseable date: keep out of era-2 statistics
+        if parsed >= era2_ts:
+            era_draws.append(nums)
+            era_dated.append({"numbers": nums, "date": date_str})
+    if bad_dates:
+        logger.warning(f"{bad_dates} draws had unparseable dates and were excluded from era-2 stats")
+
+    state["all_draws"] = all_draws
+    state["main_draws"] = era_draws
+    state["main_draws_dated"] = era_dated
+    state["historical_sets"] = {frozenset(d) for d in all_draws}
+    logger.info(
+        f"Loaded {len(all_draws)} draws total; using {len(era_draws)} "
+        f"era-2 (7/50, since {ERA2_START_DATE}) draws for statistics"
+    )
 
 
 def load_csv_data_with_dates():
-    main_path = DATA_DIR / "LOTTOMAX.csv"
-    main_draws_dated = []
-    if main_path.exists():
-        df = pd.read_csv(main_path)
-        df_main = df[df["SEQUENCE NUMBER"] == 0].sort_values("DRAW NUMBER")
-        for _, row in df_main.iterrows():
-            nums = [int(row[f"NUMBER DRAWN {i}"]) for i in range(1, 8)]
-            date_str = str(row.get("DRAW DATE", "")).strip().strip('"')
-            main_draws_dated.append({"numbers": nums, "date": date_str})
-    state["main_draws_dated"] = main_draws_dated
-    return main_draws_dated
+    if not state["main_draws_dated"]:
+        load_csv_data()
+    return state["main_draws_dated"]
 
 
 # ============================================================
@@ -139,7 +184,7 @@ def prepare_lstm_data(draws: list, num_range: int, seq_len: int = SEQUENCE_LENGT
     return np.array(X), np.array(y)
 
 
-def build_lstm_model(num_range: int, seq_len: int = SEQUENCE_LENGTH) -> keras.Model:
+def build_lstm_model(num_range: int, seq_len: int = SEQUENCE_LENGTH):
     """
     Build a Bidirectional LSTM model for lottery prediction.
 
@@ -186,6 +231,10 @@ def build_lstm_model(num_range: int, seq_len: int = SEQUENCE_LENGTH) -> keras.Mo
 
 def train_lstm(draws: list, num_range: int, model_name: str, epochs: int = 100):
     """Train LSTM model on draw history."""
+    if not TF_AVAILABLE:
+        log_msg("⚠️ TensorFlow not installed — skipping LSTM, statistical strategies only")
+        return None
+
     log_msg(f"🧠 LSTM: Preparing {len(draws)} draws for training...")
 
     X, y = prepare_lstm_data(draws, num_range)
@@ -232,23 +281,24 @@ def train_lstm(draws: list, num_range: int, model_name: str, epochs: int = 100):
     return model
 
 
-class TrainingProgressCallback(keras.callbacks.Callback):
-    def __init__(self, model_name, total_epochs):
-        self.model_name = model_name
-        self.total_epochs = total_epochs
+if TF_AVAILABLE:
+    class TrainingProgressCallback(keras.callbacks.Callback):
+        def __init__(self, model_name, total_epochs):
+            self.model_name = model_name
+            self.total_epochs = total_epochs
 
-    def on_epoch_end(self, epoch, logs=None):
-        state["training_progress"] = {
-            "status": "training",
-            "strategy": f"LSTM ({self.model_name})",
-            "epoch": epoch + 1,
-            "total_epochs": self.total_epochs,
-            "loss": round(logs.get("loss", 0), 4),
-            "val_loss": round(logs.get("val_loss", 0), 4),
-        }
+        def on_epoch_end(self, epoch, logs=None):
+            state["training_progress"] = {
+                "status": "training",
+                "strategy": f"LSTM ({self.model_name})",
+                "epoch": epoch + 1,
+                "total_epochs": self.total_epochs,
+                "loss": round(logs.get("loss", 0), 4),
+                "val_loss": round(logs.get("val_loss", 0), 4),
+            }
 
 
-def lstm_predict(model: keras.Model, draws: list, num_range: int) -> np.ndarray:
+def lstm_predict(model, draws: list, num_range: int) -> np.ndarray:
     """Get LSTM probability scores for each number."""
     if model is None or len(draws) < SEQUENCE_LENGTH:
         return np.zeros(num_range + 1)
@@ -555,6 +605,92 @@ def strategy_seed_analysis(draws_with_dates, num_range, pick_count):
 
 
 # ============================================================
+# STRATEGY 7: Smart Pick (Expected-Value optimization)
+# ============================================================
+def strategy_smart_pick(num_range: int) -> np.ndarray:
+    """
+    Score numbers by how UNPOPULAR they are with human players.
+
+    Picking unpopular numbers does not change the odds of winning, but
+    LottoMax jackpots and MaxMillions are pari-mutuel: winners split the
+    pool. Fewer co-winners => bigger expected payout for the same odds.
+
+    Popularity facts (docs/RESEARCH.md §5):
+    - 1-31 are birthday-biased, 1-12 doubly so (month AND day)
+    - 3, 7, 11, 13 are classic "lucky" favourites
+    """
+    scores = np.zeros(num_range + 1)
+    for n in range(1, num_range + 1):
+        if n >= 32:
+            s = 1.0
+        elif n >= 13:
+            s = 0.45
+        else:
+            s = 0.30
+        if n in LUCKY_NUMBERS:
+            s -= 0.15
+        scores[n] = s
+    return scores
+
+
+def _has_triple_run(nums) -> bool:
+    """True if nums contain 3+ consecutive integers (popular pattern play)."""
+    s = sorted(nums)
+    return any(s[i + 1] == s[i] + 1 and s[i + 2] == s[i] + 2 for i in range(len(s) - 2))
+
+
+def apply_ev_guard(ranked: list, pick_count: int, historical_sets=None,
+                   max_low: int = EV_MAX_LOW_NUMBERS) -> list:
+    """
+    Walk the score ranking greedily, skipping candidates that would make
+    the ticket popular (and thus likely to share the prize):
+      1. at most `max_low` numbers <= 31 (birthday tickets)
+      2. no 3+ consecutive run (sequence players)
+      3. never an exact past winning combo (people replay those)
+    Every 7-number combo is equally likely to be drawn, so this is
+    EV-neutral on hit probability and only reduces expected sharing.
+    """
+    pick = []
+    for n in ranked:
+        if len(pick) == pick_count:
+            break
+        cand = pick + [n]
+        if sum(1 for x in cand if x <= 31) > max_low:
+            continue
+        if _has_triple_run(cand):
+            continue
+        pick.append(n)
+
+    # Fallback (constraints unsatisfiable with this pool): relax the
+    # low-number cap first, and only as a last resort allow runs too
+    if len(pick) < pick_count:
+        for n in ranked:
+            if len(pick) == pick_count:
+                break
+            if n in pick or _has_triple_run(pick + [n]):
+                continue
+            pick.append(n)
+    for n in ranked:
+        if len(pick) == pick_count:
+            break
+        if n not in pick:
+            pick.append(n)
+
+    if historical_sets and frozenset(pick) in historical_sets:
+        for repl in ranked:
+            if repl in pick:
+                continue
+            trial = pick[:-1] + [repl]
+            if (frozenset(trial) not in historical_sets
+                    and not _has_triple_run(trial)
+                    and sum(1 for x in trial if x <= 31) <= max_low):
+                pick = trial
+                break
+
+    return sorted(pick)
+
+
+# ============================================================
 # ENSEMBLE
 # ============================================================
 def normalize(arr: np.ndarray) -> np.ndarray:
@@ -563,9 +699,12 @@ def normalize(arr: np.ndarray) -> np.ndarray:
     if len(positive) == 0:
         return arr
     mn, mx = positive.min(), positive.max()
-    if mx == mn:
-        return arr
     result = np.zeros_like(arr)
+    if mx == mn:
+        # All positive scores equal: map to 1.0 so raw magnitudes
+        # never leak into the weighted ensemble at their own scale
+        result[1:][valid > 0] = 1.0
+        return result
     for i in range(1, len(arr)):
         if arr[i] > 0:
             result[i] = (arr[i] - mn) / (mx - mn)
@@ -574,17 +713,13 @@ def normalize(arr: np.ndarray) -> np.ndarray:
 
 def ensemble_predict(
     draws: list, num_range: int, pick_count: int,
-    lstm_model=None, weights=None, draws_dated=None
+    lstm_model=None, weights=None, draws_dated=None, historical_sets=None
 ) -> dict:
     if len(draws) < 5:
         nums = list(np.random.choice(range(1, num_range + 1), pick_count, replace=False))
-        return {"numbers": sorted(nums), "confidence": 0, "strategies": {}}
+        return {"numbers": sorted(nums), "confidence": 0, "strategies": {}, "ev_info": None}
 
-    default_weights = {
-        "lstm": 0.25, "frequency": 0.18, "gap": 0.17,
-        "pair": 0.13, "distribution": 0.12, "seed": 0.15,
-    }
-    w = weights or default_weights
+    w = weights or DEFAULT_WEIGHTS
 
     # Run all strategies
     s1 = lstm_predict(lstm_model, draws, num_range) if lstm_model else np.zeros(num_range + 1)
@@ -592,10 +727,11 @@ def ensemble_predict(
     s3 = strategy_gap_analysis(draws, num_range)
     s4 = strategy_pair_analysis(draws, num_range)
     s5 = strategy_distribution(draws, num_range)
-    s6 = strategy_seed_analysis(draws_dated, num_range, pick_count) if draws_dated else np.zeros(num_range + 1)
+    s6 = strategy_seed_analysis(draws_dated, num_range, pick_count) if draws_dated and w.get("seed", 0) > 0 else np.zeros(num_range + 1)
+    s7 = strategy_smart_pick(num_range)
 
     # Normalize
-    n1, n2, n3, n4, n5, n6 = normalize(s1), normalize(s2), normalize(s3), normalize(s4), normalize(s5), normalize(s6)
+    n1, n2, n3, n4, n5, n6, n7 = (normalize(s) for s in (s1, s2, s3, s4, s5, s6, s7))
 
     # Weighted combination
     combined = np.zeros(num_range + 1)
@@ -606,15 +742,21 @@ def ensemble_predict(
             n3[i] * w.get("gap", 0) +
             n4[i] * w.get("pair", 0) +
             n5[i] * w.get("distribution", 0) +
-            n6[i] * w.get("seed", 0)
+            n6[i] * w.get("seed", 0) +
+            n7[i] * w.get("smart", 0)
         )
         # Small randomness for variety
         combined[i] += np.random.uniform(0, 0.03)
 
-    # Select top numbers
-    ranked = [(i, combined[i]) for i in range(1, num_range + 1)]
-    ranked.sort(key=lambda x: -x[1])
-    selected = sorted([r[0] for r in ranked[:pick_count]])
+    # Rank numbers by combined score
+    ranked = sorted(range(1, num_range + 1), key=lambda n: -combined[n])
+
+    # EV guard: when Smart Pick is active, veto popular-combination shapes
+    guard_active = w.get("smart", 0) > 0
+    if guard_active:
+        selected = apply_ev_guard(ranked, pick_count, historical_sets)
+    else:
+        selected = sorted(ranked[:pick_count])
 
     # Confidence
     top_scores = [combined[n] for n in selected]
@@ -632,10 +774,31 @@ def ensemble_predict(
             "pair": round(float(n4[num]), 3),
             "distribution": round(float(n5[num]), 3),
             "seed": round(float(n6[num]), 3),
+            "smart": round(float(n7[num]), 3),
             "total": round(float(combined[num]), 3),
         }
 
-    return {"numbers": selected, "confidence": confidence, "strategies": strategies}
+    total_weight = sum(w.get(k, 0) for k in DEFAULT_WEIGHTS)
+    if total_weight <= 0:
+        confidence = 0  # nothing but jitter drove the pick — it is pure random
+
+    low_count = sum(1 for n in selected if n <= 31)
+    is_past_winner = frozenset(selected) in (historical_sets or set())
+    ev_info = {
+        "low_count": low_count,
+        "max_low": EV_MAX_LOW_NUMBERS,
+        "sum": int(sum(selected)),
+        "guard_applied": guard_active,
+        "is_past_winner": is_past_winner,
+        "share_risk": "low" if (guard_active
+                                and low_count <= EV_MAX_LOW_NUMBERS
+                                and not is_past_winner
+                                and not _has_triple_run(selected)) else "high",
+    }
+    if total_weight <= 0:
+        ev_info["note"] = "all strategy weights are zero — this pick is uniform random"
+
+    return {"numbers": selected, "confidence": confidence, "strategies": strategies, "ev_info": ev_info}
 
 
 # ============================================================
@@ -655,15 +818,17 @@ def log_msg(msg: str):
 @app.on_event("startup")
 async def startup():
     load_csv_data()
-    load_csv_data_with_dates()
     # Try loading existing model
-    model_path = MODEL_DIR / "lottomax_main.keras"
-    if model_path.exists():
-        try:
-            state["main_model"] = keras.models.load_model(model_path)
-            log_msg("✅ Loaded existing model: lottomax_main")
-        except Exception as e:
-            log_msg(f"⚠️ Could not load lottomax_main: {e}")
+    if TF_AVAILABLE:
+        model_path = MODEL_DIR / "lottomax_main.keras"
+        if model_path.exists():
+            try:
+                state["main_model"] = keras.models.load_model(model_path)
+                log_msg("✅ Loaded existing model: lottomax_main")
+            except Exception as e:
+                log_msg(f"⚠️ Could not load lottomax_main: {e}")
+    else:
+        log_msg("⚠️ TensorFlow not installed — LSTM disabled, statistical strategies active")
 
 
 @app.get("/")
@@ -671,6 +836,9 @@ def health():
     return {
         "status": "ok",
         "main_draws": len(state["main_draws"]),
+        "all_draws": len(state["all_draws"]),
+        "era_start": ERA2_START_DATE,
+        "tf_available": TF_AVAILABLE,
         "main_model_loaded": state["main_model"] is not None,
         "last_trained": state["last_trained"],
     }
@@ -698,6 +866,9 @@ async def train(req: TrainRequest, background_tasks: BackgroundTasks):
     if len(state["main_draws"]) == 0:
         raise HTTPException(400, "No data loaded")
 
+    # Claim the flag before returning: prevents two rapid POST /train
+    # requests from both passing the check and training concurrently
+    state["is_training"] = True
     background_tasks.add_task(run_training, req.epochs)
     return {"status": "training_started", "epochs": req.epochs}
 
@@ -725,7 +896,7 @@ def run_training(epochs: int):
         log_msg("  ✅ Pair Correlation: Ready")
         log_msg("  ✅ Distribution Balance: Ready")
 
-        log_msg("\n🔑 Seed/RNG Analysis")
+        log_msg("\n🔑 Seed/RNG Analysis (transparency only — no predictive power)")
         load_csv_data_with_dates()
         if state.get("main_draws_dated"):
             results = run_seed_analysis(state["main_draws_dated"], LOTTO_MAX, LOTTO_PICK, 20)
@@ -735,9 +906,11 @@ def run_training(epochs: int):
             log_msg(f"  Partial matches (4+): {len(results['partial_matches'])}")
             log_msg("  ✅ Seed Analysis: Ready")
 
+        log_msg("\n💰 Smart Pick (EV): Ready — avoids popular combos to reduce prize splitting")
+
         state["last_trained"] = datetime.now().isoformat()
         log_msg("\n" + "=" * 50)
-        log_msg("🎯 All 6 strategies trained and ready!")
+        log_msg("🎯 All 7 strategies ready!")
         log_msg("=" * 50)
 
         state["training_progress"] = {"status": "complete", "epoch": 0, "total_epochs": 0, "loss": 0, "strategy": ""}
@@ -753,17 +926,36 @@ class PredictRequest(BaseModel):
     weights: Optional[dict] = None
 
 
+def sanitize_weights(weights: Optional[dict]) -> Optional[dict]:
+    """Validate user-supplied strategy weights: known keys, finite numbers, clamped to [0, 10]."""
+    if not weights:
+        return None
+    clean = {}
+    for key in DEFAULT_WEIGHTS:
+        if key not in weights:
+            continue
+        try:
+            v = float(weights[key])
+        except (TypeError, ValueError):
+            raise HTTPException(422, f"weight '{key}' must be a number")
+        if math.isnan(v) or math.isinf(v):
+            raise HTTPException(422, f"weight '{key}' must be finite")
+        clean[key] = min(max(v, 0.0), 10.0)
+    return clean or None
+
+
 @app.post("/predict")
 def predict(req: PredictRequest = None):
     if len(state["main_draws"]) == 0:
         raise HTTPException(400, "No data loaded")
 
-    weights = req.weights if req else None
+    weights = sanitize_weights(req.weights if req else None)
 
     main_result = ensemble_predict(
         state["main_draws"], LOTTO_MAX, LOTTO_PICK,
         state["main_model"], weights,
         draws_dated=state.get("main_draws_dated"),
+        historical_sets=state.get("historical_sets"),
     )
 
     return {
@@ -830,14 +1022,57 @@ def seed_analysis(req: SeedAnalysisRequest):
     }
 
 
+class BacktestRequest(BaseModel):
+    window: int = 150
+    random_tickets: int = 100
+
+
+@app.post("/backtest")
+def backtest(req: BacktestRequest = None):
+    """
+    Walk-forward backtest of the statistical strategies on real history,
+    against a random-ticket baseline. This is the app's honesty check:
+    it shows whether any strategy actually beats chance (spoiler: no).
+    """
+    draws = state["main_draws"]
+    if len(draws) < 60:
+        raise HTTPException(400, "Not enough data for a backtest")
+    req = req or BacktestRequest()
+    window = max(30, min(req.window, 400))
+    n_random = max(10, min(req.random_tickets, 500))
+
+    strategies = {
+        "frequency": lambda d: strategy_frequency_recency(d, LOTTO_MAX),
+        "gap": lambda d: strategy_gap_analysis(d, LOTTO_MAX),
+        "pair": lambda d: strategy_pair_analysis(d, LOTTO_MAX),
+        "distribution": lambda d: strategy_distribution(d, LOTTO_MAX),
+        "smart": lambda d: strategy_smart_pick(LOTTO_MAX),
+    }
+
+    def guarded_selector(scores, pick_count):
+        # Mirror production selection: rank by score, then apply the EV guard
+        ranked = sorted(range(1, len(scores)), key=lambda n: -scores[n])
+        return set(apply_ev_guard(ranked, pick_count, state["historical_sets"]))
+
+    results = run_walk_forward(
+        draws, LOTTO_MAX, LOTTO_PICK, strategies,
+        window=window, n_random=n_random,
+        selectors={"smart": guarded_selector},
+        ensemble_weights={k: DEFAULT_WEIGHTS.get(k, 0) for k in strategies},
+        ensemble_selector=guarded_selector,
+    )
+    state["backtest"] = results
+    return results
+
+
 @app.post("/reload-data")
 def reload_data():
     """Reload CSV data from disk."""
     load_csv_data()
-    load_csv_data_with_dates()
     return {
         "status": "ok",
         "main_draws": len(state["main_draws"]),
+        "all_draws": len(state["all_draws"]),
     }
 
 

@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 
 // ============================================================
 // LottoMax AI - Frontend
-// Connects to FastAPI backend with real LSTM 6-Strategy ensemble
+// Connects to FastAPI backend with real LSTM 7-Strategy ensemble
 // ============================================================
 
 const API = "http://localhost:8000";
@@ -61,12 +61,13 @@ function StrategyBar({ strategies, number }) {
   if (!strategies || !strategies[String(number)]) return null;
   const s = strategies[String(number)];
   const items = [
-    { key: "LSTM", val: s.lstm, color: "#ef4444" },
-    { key: "Freq", val: s.frequency, color: "#3b82f6" },
-    { key: "Gap", val: s.gap, color: "#a855f7" },
-    { key: "Pair", val: s.pair, color: "#22c55e" },
-    { key: "Dist", val: s.distribution, color: "#f97316" },
-    { key: "Seed", val: s.seed, color: "#facc15" },
+    { key: "LSTM", val: s.lstm ?? 0, color: "#ef4444" },
+    { key: "Freq", val: s.frequency ?? 0, color: "#3b82f6" },
+    { key: "Gap", val: s.gap ?? 0, color: "#a855f7" },
+    { key: "Pair", val: s.pair ?? 0, color: "#22c55e" },
+    { key: "Dist", val: s.distribution ?? 0, color: "#f97316" },
+    { key: "Seed", val: s.seed ?? 0, color: "#facc15" },
+    { key: "Smart", val: s.smart ?? 0, color: "#14b8a6" },
   ];
 
   return (
@@ -141,8 +142,10 @@ export default function LottoMaxAI() {
   const [activeTab, setActiveTab] = useState("generate");
   const [epochs, setEpochs] = useState(100);
   const [seedAnalysis, setSeedAnalysis] = useState(null);
+  const [backtest, setBacktest] = useState(null);
+  const [isBacktesting, setIsBacktesting] = useState(false);
   const [weights, setWeights] = useState({
-    lstm: 0.25, frequency: 0.18, gap: 0.17, pair: 0.13, distribution: 0.12, seed: 0.15,
+    lstm: 0.15, frequency: 0.15, gap: 0.20, pair: 0.05, distribution: 0.15, seed: 0.0, smart: 0.30,
   });
 
   const pollRef = useRef(null);
@@ -228,6 +231,11 @@ export default function LottoMaxAI() {
         body: JSON.stringify({ weights }),
       });
       const data = await res.json();
+      if (!res.ok) {
+        alert(data.detail || "Prediction failed");
+        setIsGenerating(false);
+        return;
+      }
       setPrediction(data);
 
       setHistory((prev) => [
@@ -251,11 +259,29 @@ export default function LottoMaxAI() {
   const loadFrequencies = async () => {
     try {
       const res = await fetch(`${API}/frequencies`);
+      if (!res.ok) return;
       const data = await res.json();
       setFrequencies(data);
     } catch {
       // ignore
     }
+  };
+
+  // Run walk-forward backtest
+  const runBacktest = async () => {
+    setIsBacktesting(true);
+    try {
+      const res = await fetch(`${API}/backtest`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ window: 150, random_tickets: 100 }),
+      });
+      const data = await res.json();
+      if (res.ok) setBacktest(data);
+    } catch {
+      // ignore
+    }
+    setIsBacktesting(false);
   };
 
   // Run seed analysis
@@ -267,7 +293,7 @@ export default function LottoMaxAI() {
         body: JSON.stringify({ max_draws: 20 }),
       });
       const data = await res.json();
-      setSeedAnalysis(data);
+      if (res.ok) setSeedAnalysis(data);
     } catch {
       // ignore
     }
@@ -294,6 +320,8 @@ export default function LottoMaxAI() {
 
       <div style={{ position: "relative", maxWidth: "960px", margin: "0 auto", padding: "32px 24px" }}>
         {/* Header */}
+        {/* IMAGE PLACEHOLDER: 로고/히어로 이미지 자리 — 사용자가 추후 생성해 fe/src/assets/에 추가 예정
+            <img src={heroImage} alt="LottoMax AI" style={{ maxWidth: "180px", margin: "0 auto" }} /> */}
         <header style={{ textAlign: "center", marginBottom: "8px" }}>
           <h1 style={{
             fontSize: "clamp(28px, 5vw, 40px)",
@@ -306,7 +334,7 @@ export default function LottoMaxAI() {
             LOTTOMAX AI
           </h1>
           <p style={{ color: "#94a3b8", fontSize: "12px", letterSpacing: "0.15em", textTransform: "uppercase", marginTop: "4px" }}>
-            LSTM + 6-Strategy Ensemble Engine
+            LSTM + 7-Strategy Ensemble &bull; EV-Optimized Smart Pick
           </p>
         </header>
 
@@ -337,7 +365,7 @@ export default function LottoMaxAI() {
 
         {/* Tabs */}
         <nav style={{ display: "flex", justifyContent: "center", gap: "4px", marginBottom: "32px", borderBottom: "1px solid rgba(255,255,255,0.1)", paddingBottom: "12px" }}>
-          {["generate", "analysis", "settings"].map((tab) => (
+          {["generate", "analysis", "backtest", "settings"].map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
@@ -372,7 +400,7 @@ export default function LottoMaxAI() {
             <p style={{ color: "#f87171", fontWeight: 700, marginBottom: "8px" }}>Server not connected</p>
             <p style={{ color: "#cbd5e1", fontSize: "14px", marginBottom: "16px" }}>Start the backend server:</p>
             <code style={{ color: "#e2e8f0", background: "rgba(0,0,0,0.4)", padding: "8px 16px", borderRadius: "6px", fontSize: "14px" }}>
-              cd backend && python app.py
+              cd be && python app.py
             </code>
           </div>
         )}
@@ -513,6 +541,21 @@ export default function LottoMaxAI() {
                     ))}
                   </div>
 
+                  {/* EV info: why this combo shares less prize money */}
+                  {prediction.main.ev_info && (
+                    <div style={{
+                      marginTop: "16px", padding: "10px 14px", borderRadius: "10px",
+                      background: "rgba(20,184,166,0.08)", border: "1px solid rgba(20,184,166,0.25)",
+                      display: "flex", justifyContent: "center", gap: "18px", flexWrap: "wrap",
+                      fontSize: "12px", color: "#5eead4",
+                    }}>
+                      <span>💰 Smart Pick {prediction.main.ev_info.guard_applied ? "ON" : "OFF"}</span>
+                      <span>1–31 numbers: {prediction.main.ev_info.low_count}/{prediction.main.ev_info.max_low}</span>
+                      <span>Sum: {prediction.main.ev_info.sum}</span>
+                      <span>Share risk: {prediction.main.ev_info.share_risk === "low" ? "LOW ✅" : "HIGH ⚠️"}</span>
+                    </div>
+                  )}
+
                   <button
                     onClick={() => setShowStrategies(!showStrategies)}
                     style={{
@@ -538,6 +581,7 @@ export default function LottoMaxAI() {
                         { label: "Pair", color: "#22c55e" },
                         { label: "Dist", color: "#f97316" },
                         { label: "Seed", color: "#facc15" },
+                        { label: "Smart", color: "#14b8a6" },
                       ].map((s) => (
                         <span key={s.label} style={{ display: "flex", alignItems: "center", gap: "4px" }}>
                           <div style={{ width: "8px", height: "8px", borderRadius: "2px", backgroundColor: s.color }} />
@@ -639,7 +683,7 @@ export default function LottoMaxAI() {
                       .map(([n, gap]) => (
                         <div key={n} style={{ display: "flex", alignItems: "center", gap: "4px" }}>
                           <LottoBall number={parseInt(n)} size="sm" isRevealed={true} delay={0} />
-                          <span style={{ fontSize: "11px", color: "#94a3b8" }}>{gap}d</span>
+                          <span style={{ fontSize: "11px", color: "#94a3b8" }}>{gap} draws</span>
                         </div>
                       ))}
                   </div>
@@ -700,6 +744,85 @@ export default function LottoMaxAI() {
           </div>
         )}
 
+        {/* ===================== BACKTEST TAB ===================== */}
+        {activeTab === "backtest" && connected && (
+          <div>
+            <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "16px", padding: "24px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "12px" }}>
+                <div>
+                  <h3 style={{ fontSize: "14px", fontWeight: 700, color: "#f1f5f9", textTransform: "uppercase", letterSpacing: "0.05em" }}>🔬 Walk-Forward Backtest</h3>
+                  <p style={{ fontSize: "12px", color: "#94a3b8", marginTop: "4px" }}>
+                    최근 150회차에 대해 각 전략의 top-7이 실제 당첨번호와 몇 개나 일치했는지 검증합니다.
+                    우연 기대값은 7×7/50 = 0.98개입니다.
+                  </p>
+                </div>
+                <button
+                  onClick={runBacktest}
+                  disabled={isBacktesting}
+                  style={{
+                    padding: "10px 24px", borderRadius: "10px", fontSize: "13px", fontWeight: 700,
+                    cursor: isBacktesting ? "wait" : "pointer",
+                    border: "1px solid rgba(20,184,166,0.4)",
+                    background: isBacktesting ? "rgba(20,184,166,0.1)" : "rgba(20,184,166,0.2)",
+                    color: "#5eead4",
+                  }}
+                >
+                  {isBacktesting ? "⏳ Running..." : "▶ Run Backtest"}
+                </button>
+              </div>
+
+              {backtest && (
+                <div style={{ marginTop: "20px" }}>
+                  <div style={{ overflowX: "auto" }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
+                      <thead>
+                        <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.15)", color: "#94a3b8", textAlign: "left" }}>
+                          <th style={{ padding: "8px" }}>Strategy</th>
+                          <th style={{ padding: "8px" }}>Avg matches</th>
+                          <th style={{ padding: "8px" }}>vs random ({backtest.expected_random})</th>
+                          <th style={{ padding: "8px" }}>p-value</th>
+                          <th style={{ padding: "8px" }}>0 / 1 / 2 / 3+</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {Object.entries(backtest.results).map(([name, r]) => {
+                          const diff = r.mean - backtest.expected_random;
+                          const sig = r.p < 0.05;
+                          return (
+                            <tr key={name} style={{ borderBottom: "1px solid rgba(255,255,255,0.05)", color: "#e2e8f0" }}>
+                              <td style={{ padding: "8px", fontWeight: 700 }}>{name}</td>
+                              <td style={{ padding: "8px" }}>{r.mean.toFixed(3)}</td>
+                              <td style={{ padding: "8px", color: sig ? (diff > 0 ? "#4ade80" : "#f87171") : "#94a3b8" }}>
+                                {diff >= 0 ? "+" : ""}{diff.toFixed(3)}{sig ? " *" : ""}
+                              </td>
+                              <td style={{ padding: "8px", color: "#94a3b8" }}>{r.p.toFixed(3)}</td>
+                              <td style={{ padding: "8px", color: "#94a3b8" }}>
+                                {r.dist["0"]} / {r.dist["1"]} / {r.dist["2"]} / {r.dist["3+"]}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div style={{
+                    marginTop: "16px", padding: "12px 16px", borderRadius: "10px",
+                    background: "rgba(20,184,166,0.08)", border: "1px solid rgba(20,184,166,0.25)",
+                    fontSize: "13px", color: "#5eead4", lineHeight: 1.6,
+                  }}>
+                    {backtest.verdict}
+                  </div>
+                </div>
+              )}
+              {!backtest && !isBacktesting && (
+                <p style={{ color: "#94a3b8", fontSize: "12px", marginTop: "16px" }}>
+                  &quot;Run Backtest&quot;를 눌러 전략별 실제 성능을 확인하세요. (약 5초 소요)
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* ===================== SETTINGS TAB ===================== */}
         {activeTab === "settings" && (
           <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
@@ -729,15 +852,17 @@ export default function LottoMaxAI() {
             <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "16px", padding: "24px" }}>
               <h3 style={{ fontSize: "14px", fontWeight: 700, color: "#f1f5f9", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "16px" }}>Strategy Weights</h3>
               <p style={{ fontSize: "12px", color: "#94a3b8", marginBottom: "16px" }}>
-                Adjust each strategy&apos;s influence. LSTM gets highest default weight for deep pattern detection.
+                Adjust each strategy&apos;s influence. Defaults follow the backtest (docs/RESEARCH.md):
+                Smart Pick highest, pair lowered, seed off.
               </p>
               {[
+                { key: "smart", label: "Smart Pick (EV)", color: "#14b8a6", desc: "인기 조합 회피 — 당첨 확률은 동일, 당첨 시 분배금 기대값 ↑" },
+                { key: "gap", label: "Gap Analysis", color: "#a855f7", desc: "Overdue numbers based on gap distributions" },
                 { key: "lstm", label: "LSTM Deep Learning", color: "#ef4444", desc: "Neural network sequential pattern detection" },
                 { key: "frequency", label: "Frequency + Recency", color: "#3b82f6", desc: "Hot/cold numbers with time decay" },
-                { key: "gap", label: "Gap Analysis", color: "#a855f7", desc: "Overdue numbers based on gap distributions" },
-                { key: "pair", label: "Pair Correlation", color: "#22c55e", desc: "Numbers that appear together frequently" },
                 { key: "distribution", label: "Distribution Balance", color: "#f97316", desc: "Range & odd/even equilibrium" },
-                { key: "seed", label: "Seed/RNG Analysis", color: "#facc15", desc: "Time-based PRNG reverse engineering" },
+                { key: "pair", label: "Pair Correlation", color: "#22c55e", desc: "백테스트에서 랜덤보다 유의하게 나빴음 — 기본 가중치 최소화" },
+                { key: "seed", label: "Seed/RNG Analysis", color: "#facc15", desc: "예측력 없음 검증됨 (기본 0) — 투명성을 위해 유지" },
               ].map((s) => (
                 <div key={s.key} style={{ marginBottom: "16px" }}>
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "4px" }}>
@@ -760,7 +885,7 @@ export default function LottoMaxAI() {
                   Total: {Object.values(weights).reduce((a, b) => a + b, 0).toFixed(2)}
                 </span>
                 <button
-                  onClick={() => setWeights({ lstm: 0.25, frequency: 0.18, gap: 0.17, pair: 0.13, distribution: 0.12, seed: 0.15 })}
+                  onClick={() => setWeights({ lstm: 0.15, frequency: 0.15, gap: 0.20, pair: 0.05, distribution: 0.15, seed: 0.0, smart: 0.30 })}
                   style={{ fontSize: "12px", color: "#94a3b8", background: "none", border: "none", cursor: "pointer" }}
                 >
                   Reset defaults
@@ -773,7 +898,9 @@ export default function LottoMaxAI() {
               <h3 style={{ fontSize: "14px", fontWeight: 700, color: "#f1f5f9", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "16px" }}>Server Info</h3>
               {serverInfo ? (
                 <div style={{ fontSize: "12px", color: "#cbd5e1", display: "flex", flexDirection: "column", gap: "4px" }}>
-                  <p>Main draws: {serverInfo.main_draws}</p>
+                  <p>Draws used for statistics: {serverInfo.main_draws} (7/50 era, since {serverInfo.era_start})</p>
+                  <p>Total draws in CSV: {serverInfo.all_draws}</p>
+                  <p>TensorFlow: <span style={{ color: serverInfo.tf_available ? "#4ade80" : "#f87171" }}>{serverInfo.tf_available ? "Available" : "Not installed (LSTM disabled)"}</span></p>
                   <p>Main model: <span style={{ color: serverInfo.main_model_loaded ? "#4ade80" : "#f87171" }}>{serverInfo.main_model_loaded ? "Loaded" : "Not trained"}</span></p>
                   {serverInfo.last_trained && <p>Last trained: {new Date(serverInfo.last_trained).toLocaleString()}</p>}
                 </div>
@@ -803,9 +930,13 @@ export default function LottoMaxAI() {
         )}
 
         {/* Footer */}
-        <footer style={{ marginTop: "48px", textAlign: "center", fontSize: "12px", color: "#94a3b8" }}>
-          <p>LottoMax AI — LSTM + 6-Strategy Ensemble Engine</p>
-          <p style={{ marginTop: "4px", color: "#94a3b8" }}>For entertainment purposes. Lottery outcomes are not guaranteed.</p>
+        <footer style={{ marginTop: "48px", textAlign: "center", fontSize: "12px", color: "#94a3b8", lineHeight: 1.7 }}>
+          <p>LottoMax AI — LSTM + 7-Strategy Ensemble Engine</p>
+          <p style={{ marginTop: "4px" }}>
+            정직 고지: 추첨은 완전한 무작위이며 어떤 전략도 번호 적중 확률을 높일 수 없습니다 (Backtest 탭에서 직접 확인 가능).
+            Smart Pick은 당첨 시 <em>분배금 기대값</em>을 높이는 전략입니다.
+          </p>
+          <p style={{ marginTop: "4px" }}>For entertainment purposes. Lottery outcomes are not guaranteed.</p>
         </footer>
       </div>
     </div>
