@@ -1,4 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import SignalLab from "./SignalLab";
+import EvTab from "./EvTab";
+import DataPanel from "./DataPanel";
 
 // ============================================================
 // LottoMax AI - Frontend
@@ -28,6 +31,7 @@ function LottoBall({ number, delay = 0, isRevealed = true, size = "lg" }) {
       const timer = setTimeout(() => setRevealed(true), delay);
       return () => clearTimeout(timer);
     }
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setRevealed(false);
   }, [isRevealed, delay]);
 
@@ -167,6 +171,7 @@ export default function LottoMaxAI() {
   }, []);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     checkServer();
     const interval = setInterval(checkServer, 10000);
     return () => clearInterval(interval);
@@ -214,7 +219,7 @@ export default function LottoMaxAI() {
       // Start polling
       if (pollRef.current) clearInterval(pollRef.current);
       pollRef.current = setInterval(pollTraining, 1000);
-    } catch (e) {
+    } catch {
       alert("Cannot connect to server");
     }
   };
@@ -300,6 +305,7 @@ export default function LottoMaxAI() {
   };
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (activeTab === "analysis" && connected) loadFrequencies();
   }, [activeTab, connected]);
 
@@ -364,13 +370,13 @@ export default function LottoMaxAI() {
         </div>
 
         {/* Tabs */}
-        <nav style={{ display: "flex", justifyContent: "center", gap: "4px", marginBottom: "32px", borderBottom: "1px solid rgba(255,255,255,0.1)", paddingBottom: "12px" }}>
-          {["generate", "analysis", "backtest", "settings"].map((tab) => (
+        <nav style={{ display: "flex", justifyContent: "center", flexWrap: "wrap", gap: "4px", marginBottom: "32px", borderBottom: "1px solid rgba(255,255,255,0.1)", paddingBottom: "12px" }}>
+          {["generate", "analysis", "backtest", "signal", "ev", "settings"].map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
               style={{
-                padding: "8px 24px",
+                padding: "8px 18px",
                 fontSize: "12px",
                 textTransform: "uppercase",
                 letterSpacing: "0.1em",
@@ -408,6 +414,26 @@ export default function LottoMaxAI() {
         {/* ===================== GENERATE TAB ===================== */}
         {activeTab === "generate" && connected && (
           <div>
+            {/* Honesty notice */}
+            <div style={{
+              padding: "10px 14px", borderRadius: "10px", marginTop: "8px",
+              background: "rgba(20,184,166,0.08)", border: "1px solid rgba(20,184,166,0.25)",
+              fontSize: "12px", color: "#5eead4", lineHeight: 1.6, textAlign: "center",
+            }}>
+              모든 번호 조합의 당첨 확률은 동일합니다. Smart Pick은 당첨 시 공동 당첨자를 줄이는 방식이며 당첨 확률을 높이지 않습니다.
+            </div>
+
+            {/* LSTM vs constant-probability baseline */}
+            {serverInfo && serverInfo.lstm_verdict && serverInfo.lstm_verdict.beats_constant_baseline === false && (
+              <div style={{
+                display: "inline-block", marginTop: "12px", padding: "4px 12px", borderRadius: "999px",
+                background: "rgba(239,68,68,0.12)", border: "1px solid rgba(239,68,68,0.4)",
+                color: "#f87171", fontSize: "12px", fontWeight: 700,
+              }} title={`검증 손실 ${serverInfo.lstm_verdict.val_loss} vs 상수 기준선 ${serverInfo.lstm_verdict.baseline_loss}`}>
+                ⚠️ LSTM: 상수 확률 대비 개선 없음
+              </div>
+            )}
+
             {/* Control Buttons */}
             <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "24px", margin: "32px 0" }}>
               <button
@@ -638,7 +664,7 @@ export default function LottoMaxAI() {
           <div>
             {frequencies ? (
               <>
-                <FrequencyChart data={frequencies.main_recent} numRange={50}
+                <FrequencyChart data={frequencies.main_recent} numRange={serverInfo?.pool_size || 52}
                   title={`LottoMax Frequency (Last ${frequencies.recent_window} Draws)`} />
 
                 {/* Hot & Cold */}
@@ -786,7 +812,7 @@ export default function LottoMaxAI() {
                       </thead>
                       <tbody>
                         {Object.entries(backtest.results).map(([name, r]) => {
-                          const diff = r.mean - backtest.expected_random;
+                          const diff = r.mean - (r.expected ?? backtest.expected_random);
                           const sig = r.p < 0.05;
                           return (
                             <tr key={name} style={{ borderBottom: "1px solid rgba(255,255,255,0.05)", color: "#e2e8f0" }}>
@@ -823,9 +849,17 @@ export default function LottoMaxAI() {
           </div>
         )}
 
+        {/* ===================== SIGNAL LAB TAB ===================== */}
+        {activeTab === "signal" && connected && <SignalLab API={API} />}
+
+        {/* ===================== EV TAB ===================== */}
+        {activeTab === "ev" && connected && <EvTab API={API} />}
+
         {/* ===================== SETTINGS TAB ===================== */}
         {activeTab === "settings" && (
           <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
+            {connected && <DataPanel API={API} />}
+
             {/* Training Settings */}
             <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "16px", padding: "24px" }}>
               <h3 style={{ fontSize: "14px", fontWeight: 700, color: "#f1f5f9", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "16px" }}>Training Settings</h3>
@@ -898,7 +932,7 @@ export default function LottoMaxAI() {
               <h3 style={{ fontSize: "14px", fontWeight: 700, color: "#f1f5f9", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "16px" }}>Server Info</h3>
               {serverInfo ? (
                 <div style={{ fontSize: "12px", color: "#cbd5e1", display: "flex", flexDirection: "column", gap: "4px" }}>
-                  <p>Draws used for statistics: {serverInfo.main_draws} (7/50 era, since {serverInfo.era_start})</p>
+                  <p>Draws used for statistics: {serverInfo.main_draws} (7/50 era since {serverInfo.era_start}, 7/{serverInfo.pool_size} since {serverInfo.era3_start})</p>
                   <p>Total draws in CSV: {serverInfo.all_draws}</p>
                   <p>TensorFlow: <span style={{ color: serverInfo.tf_available ? "#4ade80" : "#f87171" }}>{serverInfo.tf_available ? "Available" : "Not installed (LSTM disabled)"}</span></p>
                   <p>Main model: <span style={{ color: serverInfo.main_model_loaded ? "#4ade80" : "#f87171" }}>{serverInfo.main_model_loaded ? "Loaded" : "Not trained"}</span></p>

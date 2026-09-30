@@ -20,22 +20,28 @@ def loaded():
 # ---------------- data loading / era handling ----------------
 
 def test_era_split(loaded):
-    assert len(loaded["all_draws"]) == 1211
-    assert len(loaded["main_draws"]) == 708
-    assert len(loaded["main_draws_dated"]) == 708
+    assert len(loaded["all_draws"]) == 1273
+    assert len(loaded["main_draws"]) == 770
+    assert len(loaded["main_draws_dated"]) == 770
+    # 722 draws in the 7/50 era + 48 in the 7/52 era (since 2026-04-14)
+    assert loaded["main_draw_pools"].count(50) == 722
+    assert loaded["main_draw_pools"].count(52) == 48
     # era-2 starts at the 7/50 format change
     assert loaded["main_draws_dated"][0]["date"] == "2019-05-14"
 
 
 def test_historical_sets_cover_full_history(loaded):
-    assert len(loaded["historical_sets"]) == 1211
+    assert len(loaded["historical_sets"]) == 1273
     assert frozenset(loaded["all_draws"][0]) in loaded["historical_sets"]
 
 
 def test_draw_integrity(loaded):
-    for d in loaded["main_draws"]:
+    for d, pool in zip(loaded["main_draws"], loaded["main_draw_pools"]):
         assert len(set(d)) == 7
-        assert all(1 <= n <= 50 for n in d)
+        assert all(1 <= n <= pool for n in d)
+    # 51/52 only ever appear in the 7/52 era
+    assert max(n for d, p in zip(loaded["main_draws"], loaded["main_draw_pools"]) if p == 50 for n in d) == 50
+    assert max(n for d in loaded["main_draws"] for n in d) == 52
 
 
 def test_number_50_only_in_era2(loaded):
@@ -106,12 +112,12 @@ def test_normalize_range():
 
 def test_ensemble_predict_shape(loaded):
     r = lotto.ensemble_predict(
-        loaded["main_draws"], 50, 7, None, None,
+        loaded["main_draws"], lotto.LOTTO_MAX, 7, None, None,
         draws_dated=None, historical_sets=loaded["historical_sets"],
     )
     nums = r["numbers"]
     assert len(nums) == 7 and len(set(nums)) == 7
-    assert all(1 <= n <= 50 for n in nums)
+    assert all(1 <= n <= lotto.LOTTO_MAX for n in nums)
     assert nums == sorted(nums)
     first = r["strategies"][str(nums[0])]
     assert "smart" in first and "seed" in first
@@ -123,7 +129,7 @@ def test_ensemble_predict_shape(loaded):
 
 def test_ensemble_without_smart_weight(loaded):
     w = {"frequency": 0.5, "gap": 0.5}
-    r = lotto.ensemble_predict(loaded["main_draws"], 50, 7, None, w,
+    r = lotto.ensemble_predict(loaded["main_draws"], lotto.LOTTO_MAX, 7, None, w,
                                historical_sets=loaded["historical_sets"])
     assert len(r["numbers"]) == 7
     assert r["ev_info"]["guard_applied"] is False
@@ -139,13 +145,13 @@ def test_ensemble_tiny_history():
 
 def test_walk_forward_sanity(loaded):
     strategies = {
-        "frequency": lambda d: lotto.strategy_frequency_recency(d, 50),
-        "smart": lambda d: lotto.strategy_smart_pick(50),
+        "frequency": lambda d: lotto.strategy_frequency_recency(d, lotto.LOTTO_MAX),
+        "smart": lambda d: lotto.strategy_smart_pick(lotto.LOTTO_MAX),
     }
-    r = run_walk_forward(loaded["main_draws"], 50, 7, strategies,
-                         window=40, n_random=20)
+    r = run_walk_forward(loaded["main_draws"], lotto.LOTTO_MAX, 7, strategies,
+                         window=40, n_random=20, pools=loaded["main_draw_pools"])
     assert r["window"] == 40
-    assert r["expected_random"] == pytest.approx(0.98)
+    assert r["expected_random"] == pytest.approx(49 / 52, abs=1e-4)
     assert set(r["results"]) == {"frequency", "smart", "ensemble"}
     for s in r["results"].values():
         assert 0 <= s["mean"] <= 7
@@ -172,23 +178,26 @@ def client():
 def test_api_health(client):
     r = client.get("/").json()
     assert r["status"] == "ok"
-    assert r["main_draws"] == 708
-    assert r["all_draws"] == 1211
+    assert r["main_draws"] == 770
+    assert r["all_draws"] == 1273
     assert r["era_start"] == "2019-05-14"
+    assert r["pool_size"] == 52
+    assert "lstm_verdict" in r
 
 
 def test_api_frequencies(client):
     r = client.get("/frequencies").json()
-    assert r["total_draws"] == 708
-    # era-2 counts: number 50 must NOT look artificially rare
-    counts = [int(v) for v in r["main_total"].values()]
+    assert r["total_draws"] == 770
+    # era-2 counts: number 50 must NOT look artificially rare (51/52 are new, so excluded)
+    counts = [int(v) for k, v in r["main_total"].items() if int(k) <= 50]
     assert min(counts) > 0.5 * (sum(counts) / len(counts))
+    assert set(r["main_total"]) == {str(i) for i in range(1, 53)}
 
 
 def test_api_predict(client):
     r = client.post("/predict", json={}).json()
     nums = r["main"]["numbers"]
-    assert len(nums) == 7 and all(1 <= n <= 50 for n in nums)
+    assert len(nums) == 7 and all(1 <= n <= lotto.LOTTO_MAX for n in nums)
     assert "ev_info" in r["main"]
 
 
@@ -209,7 +218,7 @@ def test_api_backtest(client):
 
 def test_api_reload(client):
     r = client.post("/reload-data").json()
-    assert r["main_draws"] == 708 and r["all_draws"] == 1211
+    assert r["main_draws"] == 770 and r["all_draws"] == 1273
 
 
 # ---------------- adversarial regression tests (Stage 3) ----------------
@@ -268,10 +277,125 @@ def test_smart_selection_respects_guard(loaded):
 def test_share_risk_reflects_past_winner(loaded):
     past = next(iter(loaded["historical_sets"]))
     # Force a scenario where the pick equals a past winner via guard bypass
-    r = lotto.ensemble_predict(loaded["main_draws"], 50, 7, None,
+    r = lotto.ensemble_predict(loaded["main_draws"], lotto.LOTTO_MAX, 7, None,
                                {"frequency": 1.0}, historical_sets=loaded["historical_sets"])
     ev = r["ev_info"]
     if ev["is_past_winner"] or lotto._has_triple_run(r["numbers"]):
         assert ev["share_risk"] == "high"
     assert ev["guard_applied"] is False  # smart weight 0 -> guard off -> risk high
     assert ev["share_risk"] == "high"
+
+
+# ---------------- v5 additions ----------------
+
+def test_predict_mode_ensemble_backward_compatible(client):
+    a = client.post("/predict", json={}).json()
+    b = client.post("/predict", json={"mode": "ensemble"}).json()
+    for r in (a, b):
+        assert r["mode"] == "ensemble"
+        assert len(r["main"]["numbers"]) == 7
+        assert "strategies" in r["main"] and "share_risk" in r["main"]["ev_info"]
+    assert client.post("/predict", json={"mode": "nope"}).status_code == 422
+
+
+def test_predict_mode_smart_v2(client):
+    r = client.post("/predict", json={"mode": "smart_v2"}).json()
+    ev = r["main"]["ev_info"]
+    assert len(set(r["main"]["numbers"])) == 7
+    assert ev["popularity_ratio"] > 0 and ev["mode"] == "smart_v2"
+    assert ev["low_count"] <= lotto.EV_MAX_LOW_NUMBERS
+
+
+def test_history_check_exact_match_and_histogram(client, loaded):
+    past = next(d for d in loaded["all_draws"][-5:])
+    r = client.post("/history-check", json={"numbers": past}).json()
+    assert r["exact_match"] is not None and r["max_overlap"] == 7
+    assert sum(r["overlap_histogram"].values()) == 1273
+    assert r["overlap_histogram"]["7"] >= 1
+    # the random-ticket expectation must also sum to the number of draws
+    assert sum(r["expected_histogram_random"].values()) == pytest.approx(1273, abs=0.5)
+
+
+def test_history_check_no_exact_match(client):
+    r = client.post("/history-check", json={"numbers": [1, 2, 3, 4, 5, 6, 7]}).json()
+    assert r["exact_match"] is None
+    assert r["max_overlap"] <= 6
+
+
+def test_history_check_validation(client):
+    assert client.post("/history-check", json={"numbers": [1, 2, 3]}).status_code == 422
+    assert client.post("/history-check", json={"numbers": [1, 1, 2, 3, 4, 5, 6]}).status_code == 422
+    assert client.post("/history-check", json={"numbers": [1, 2, 3, 4, 5, 6, 53]}).status_code == 422
+
+
+def test_status_has_lstm_verdict(client):
+    r = client.get("/status").json()
+    assert "lstm_verdict" in r
+
+
+def test_lstm_verdict_logic():
+    base = lotto.constant_baseline_loss(7 / 52)
+    assert base == pytest.approx(0.3951, abs=1e-3)
+    assert lotto.constant_baseline_loss(0.14) == pytest.approx(0.4051, abs=1e-3)
+    worse = lotto.make_lstm_verdict(base + 0.01, 7 / 52)
+    assert worse["beats_constant_baseline"] is False
+    barely = lotto.make_lstm_verdict(base - 0.0003, 7 / 52)   # inside the 0.0005 margin
+    assert barely["beats_constant_baseline"] is False
+    better = lotto.make_lstm_verdict(base - 0.002, 7 / 52)
+    assert better["beats_constant_baseline"] is True
+
+
+def test_train_defaults_skip_seed_analysis(client, monkeypatch):
+    seen = {}
+    monkeypatch.setattr(lotto, "run_training", lambda epochs, seed_flag=False: seen.update(flag=seed_flag))
+    assert client.post("/train", json={"epochs": 1}).status_code == 200
+    assert seen["flag"] is False
+    lotto.state["is_training"] = False
+    assert client.post("/train", json={"epochs": 1, "run_seed_analysis": True}).status_code == 200
+    assert seen["flag"] is True
+    lotto.state["is_training"] = False
+
+
+def test_run_training_skips_seed_analysis_by_default(monkeypatch):
+    def boom(*a, **k):
+        raise AssertionError("seed analysis must not run by default")
+    monkeypatch.setattr(lotto, "run_seed_analysis", boom)
+    monkeypatch.setattr(lotto, "train_lstm", lambda *a, **k: None)
+    lotto.run_training(1)
+    assert lotto.state["is_training"] is False
+    assert lotto.state["training_progress"]["status"] == "complete"
+
+
+def test_ensemble_seed_is_reproducible(loaded):
+    kw = dict(historical_sets=loaded["historical_sets"])
+    a = lotto.ensemble_predict(loaded["main_draws"], lotto.LOTTO_MAX, 7, None, None, seed=123, **kw)
+    b = lotto.ensemble_predict(loaded["main_draws"], lotto.LOTTO_MAX, 7, None, None, seed=123, **kw)
+    assert a["numbers"] == b["numbers"]
+
+
+def test_new_numbers_are_neutralised():
+    s = np.zeros(53)
+    s[1:51] = np.linspace(1, 2, 50)
+    s[51], s[52] = 9.0, 0.1
+    out = lotto.neutralize_new_numbers(s)
+    assert out[51] == out[52] == pytest.approx(s[1:51].mean())
+    assert np.array_equal(out[:51], s[:51])
+
+
+def test_cors_origins_env(monkeypatch):
+    monkeypatch.delenv("LOTTOMAX_CORS_ORIGINS", raising=False)
+    assert lotto.cors_origins() == ["http://localhost:5173", "http://127.0.0.1:5173"]
+    monkeypatch.setenv("LOTTOMAX_CORS_ORIGINS", "https://a.example, https://b.example")
+    assert lotto.cors_origins() == ["https://a.example", "https://b.example"]
+
+
+@pytest.mark.skipif(not lotto.TF_AVAILABLE, reason="TensorFlow not installed")
+def test_lstm_is_small():
+    m = lotto.build_lstm_model(lotto.LOTTO_MAX)
+    assert m.count_params() < 50_000
+
+
+def test_lstm_verdict_roundtrip_json():
+    import json
+    v = lotto.make_lstm_verdict(0.41, 7 / 52)
+    assert json.loads(json.dumps(v)) == v
