@@ -13,7 +13,8 @@ import { card, h3, muted, body, th, td } from "./pixel/styles";
 
 // ============================================================
 // LottoMax AI - Frontend
-// Connects to FastAPI backend with real LSTM 7-Strategy ensemble
+// Connects to FastAPI backend: typical-set generator (realistic / balanced),
+// Smart Pick v2, and the legacy LSTM 7-strategy ensemble
 // ============================================================
 
 const API = import.meta.env.VITE_API_URL || "http://localhost:8000";
@@ -39,6 +40,16 @@ const STRATEGIES = [
 ];
 
 const TABS = ["generate", "analysis", "backtest", "signal", "ev", "settings"];
+
+// Generation modes (POST /predict { mode }). Every mode is honest about the same fact:
+// each 7-number combination has exactly the same chance of being drawn.
+const MODES = [
+  { key: "realistic", label: "REALISTIC", desc: "실제 추첨처럼 보이는 조합(전형 구간)에서 무작위로 뽑습니다. 당첨 확률은 모든 조합이 같습니다." },
+  { key: "balanced", label: "BALANCED", desc: "전형 구간 + 인기 조합 회피(EV 가드). 당첨 시 공동 당첨자를 줄이는 데만 의미가 있고, 인기도는 가정 기반 추정입니다." },
+  { key: "smart_v2", label: "SMART V2", desc: "인기도가 낮은 조합을 무작위로 뽑습니다(가정 기반). 전형 구간 밖의 조합도 나올 수 있습니다." },
+  { key: "ensemble", label: "ENSEMBLE", desc: "실험용: 전략 점수 상위 7개. 학습할 신호가 없어 같은 조합이 반복되고 실제 추첨과 다르게 쏠립니다." },
+];
+const modeLabel = (key) => (MODES.find((m) => m.key === key) || { label: String(key).toUpperCase() }).label;
 
 // ============================================================
 // Components
@@ -116,7 +127,11 @@ function BallList({ entries, suffix = "" }) {
 
 const sectionTitle = (color) => ({ ...h3, color });
 const btnRow = { display: "flex", alignItems: "center", justifyContent: "center", gap: "24px", margin: "32px 0", flexWrap: "wrap" };
-const noticeBox = { ...pixelBox(C.shadow, C.good, 2, false), padding: "12px 14px", fontFamily: FONT, fontSize: 8, color: C.good, lineHeight: 1.9 };
+const noticeTone = (ok) => ({
+  ...pixelBox(C.shadow, ok ? C.good : C.bad, 2, false),
+  padding: "12px 14px", fontFamily: FONT, fontSize: 8, color: ok ? C.good : C.bad, lineHeight: 1.9,
+});
+const noticeBox = noticeTone(true);
 const rangeStyle = { width: "100%", height: "8px", cursor: "pointer", accentColor: C.accent };
 
 // ============================================================
@@ -140,6 +155,7 @@ export default function LottoMaxAI() {
   const [backtest, setBacktest] = useState(null);
   const [isBacktesting, setIsBacktesting] = useState(false);
   const [revealDone, setRevealDone] = useState(false);
+  const [mode, setMode] = useState("realistic");
   const [weights, setWeights] = useState({
     lstm: 0.15, frequency: 0.15, gap: 0.20, pair: 0.05, distribution: 0.15, seed: 0.0, smart: 0.30,
   });
@@ -226,7 +242,7 @@ export default function LottoMaxAI() {
       const res = await fetch(`${API}/predict`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ weights }),
+        body: JSON.stringify({ mode, weights }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -240,7 +256,9 @@ export default function LottoMaxAI() {
         {
           id: Date.now(),
           main: data.main.numbers,
-          confidence: data.main.confidence,
+          mode: data.mode,
+          typical: data.main.typicality ? data.main.typicality.typical : null,
+          sum: data.main.typicality ? data.main.typicality.sum : null,
           modelTrained: data.model_trained,
           time: new Date().toLocaleTimeString(),
         },
@@ -355,11 +373,28 @@ export default function LottoMaxAI() {
           <div>
             {/* Honesty notice */}
             <div style={{ ...noticeBox, marginTop: "8px", textAlign: "center" }}>
-              모든 번호 조합의 당첨 확률은 동일합니다. Smart Pick은 당첨 시 공동 당첨자를 줄이는 방식이며 당첨 확률을 높이지 않습니다.
+              모든 번호 조합의 당첨 확률은 동일합니다. REALISTIC은 실제 추첨처럼 보이는 조합을, BALANCED·SMART는 당첨 시 공동 당첨자를 줄이는 조합을 만들 뿐 당첨 확률을 높이지 않습니다.
             </div>
 
-            {/* LSTM vs constant-probability baseline */}
-            {serverInfo && serverInfo.lstm_verdict && serverInfo.lstm_verdict.beats_constant_baseline === false && (
+            {/* Mode selector */}
+            <div style={{ margin: "16px 4px 0" }}>
+              <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                {MODES.map((m) => (
+                  <PixelButton
+                    key={m.key}
+                    tone={mode === m.key ? "accent" : "plain"}
+                    onClick={() => setMode(m.key)}
+                    style={{ fontSize: 9, padding: "10px 12px" }}
+                  >
+                    {mode === m.key ? "> " : ""}{m.label}
+                  </PixelButton>
+                ))}
+              </div>
+              <p style={{ ...muted, marginTop: "12px" }}>{modeLabel(mode)}: {MODES.find((m) => m.key === mode).desc}</p>
+            </div>
+
+            {/* LSTM vs constant-probability baseline (only the ensemble uses the LSTM) */}
+            {mode === "ensemble" && serverInfo && serverInfo.lstm_verdict && serverInfo.lstm_verdict.beats_constant_baseline === false && (
               <div style={{
                 ...pixelBox(C.shadow, C.bad, 2, false), display: "inline-block", marginTop: "16px", padding: "8px 12px",
                 color: C.bad, fontFamily: FONT, fontSize: "8px", lineHeight: 1.8,
@@ -370,20 +405,22 @@ export default function LottoMaxAI() {
 
             {/* Control Buttons */}
             <div style={btnRow}>
-              <PixelButton
-                onClick={startTraining}
-                disabled={isTraining}
-                tone={modelReady && !isTraining ? "good" : "plain"}
-              >
-                {isTraining ? "TRAINING LSTM..." : modelReady ? "RETRAIN MODEL" : "TRAIN LSTM MODEL"}
-              </PixelButton>
+              {mode === "ensemble" && (
+                <PixelButton
+                  onClick={startTraining}
+                  disabled={isTraining}
+                  tone={modelReady && !isTraining ? "good" : "plain"}
+                >
+                  {isTraining ? "TRAINING LSTM..." : modelReady ? "RETRAIN MODEL" : "TRAIN LSTM MODEL"}
+                </PixelButton>
+              )}
 
               <PixelButton onClick={generate} disabled={isGenerating} tone="accent">
                 {isGenerating ? "ANALYZING..." : "GENERATE NUMBERS"}
               </PixelButton>
             </div>
 
-            {!modelReady && !isTraining && (
+            {mode === "ensemble" && !modelReady && !isTraining && (
               <p style={{ ...muted, textAlign: "center", marginBottom: "24px" }}>
                 Train the LSTM model first for deep learning predictions, or generate with statistical strategies only.
               </p>
@@ -440,16 +477,21 @@ export default function LottoMaxAI() {
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "12px", marginBottom: "8px" }}>
                     <h2 style={{ ...h3, margin: 0 }}>LOTTOMAX NUMBERS</h2>
                     {revealDone && (
-                      <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                        {prediction.model_trained && (
+                      <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                        <span style={{ fontFamily: FONT, fontSize: "8px", background: C.panelHi, color: C.ink, padding: "4px 8px" }}>
+                          {modeLabel(prediction.mode)}
+                        </span>
+                        {prediction.mode === "ensemble" && prediction.model_trained && (
                           <span style={{ fontFamily: FONT, fontSize: "8px", background: C.panelHi, color: C.ink, padding: "4px 8px" }}>LSTM</span>
                         )}
-                        <div style={{
-                          height: "8px",
-                          width: `${prediction.main.confidence}px`,
-                          background: prediction.main.confidence > 50 ? C.good : C.bad,
-                        }} />
-                        <span style={{ fontFamily: FONT, fontSize: "8px", color: C.ink }}>{prediction.main.confidence}%</span>
+                        {prediction.mode === "ensemble" && prediction.main.confidence != null && (
+                          <span
+                            title="뽑힌 번호의 평균 점수가 전체 평균보다 얼마나 높은지입니다. 당첨 확률이 아닙니다."
+                            style={{ fontFamily: FONT, fontSize: "8px", color: C.dim }}
+                          >
+                            SCORE GAP {prediction.main.confidence}% (NOT A WIN CHANCE)
+                          </span>
+                        )}
                       </div>
                     )}
                   </div>
@@ -463,6 +505,24 @@ export default function LottoMaxAI() {
 
                   {revealDone && (
                     <>
+                      {/* Typicality: does this ticket look like a real draw? (not a win chance) */}
+                      {prediction.main.typicality && (
+                        <div style={{ marginTop: "16px" }}>
+                          <div style={{
+                            ...noticeTone(prediction.main.typicality.typical),
+                            display: "flex", justifyContent: "center", gap: "18px", flexWrap: "wrap",
+                          }}>
+                            <span>{prediction.main.typicality.typical ? "TYPICAL SET" : "NOT TYPICAL"}</span>
+                            <span>
+                              SUM {prediction.main.typicality.sum} ({prediction.main.typicality.sum_band[0]}-{prediction.main.typicality.sum_band[1]})
+                            </span>
+                            <span>ODD {prediction.main.typicality.odd_count}</span>
+                            <span>DECADES {prediction.main.typicality.decades}</span>
+                          </div>
+                          <p style={{ ...muted, marginTop: "8px", textAlign: "center" }}>{prediction.main.typicality.note}</p>
+                        </div>
+                      )}
+
                       {showStrategies && (
                         <div style={{ display: "flex", flexDirection: "row", alignItems: "flex-start", justifyContent: "center", gap: "12px", flexWrap: "wrap", marginTop: "8px" }}>
                           {prediction.main.numbers.map((num) => (
@@ -487,13 +547,15 @@ export default function LottoMaxAI() {
                         </div>
                       )}
 
-                      <div style={{ marginTop: "16px", textAlign: "center" }}>
-                        <PixelButton tone="plain" onClick={() => setShowStrategies(!showStrategies)}>
-                          {showStrategies ? "HIDE STRATEGY BREAKDOWN" : "SHOW STRATEGY BREAKDOWN"}
-                        </PixelButton>
-                      </div>
+                      {Object.keys(prediction.main.strategies || {}).length > 0 && (
+                        <div style={{ marginTop: "16px", textAlign: "center" }}>
+                          <PixelButton tone="plain" onClick={() => setShowStrategies(!showStrategies)}>
+                            {showStrategies ? "HIDE STRATEGY BREAKDOWN" : "SHOW STRATEGY BREAKDOWN"}
+                          </PixelButton>
+                        </div>
+                      )}
 
-                      {showStrategies && (
+                      {showStrategies && Object.keys(prediction.main.strategies || {}).length > 0 && (
                         <div style={{ marginTop: "16px", display: "flex", justifyContent: "center", gap: "16px", fontFamily: FONT, fontSize: "8px", color: C.ink, flexWrap: "wrap" }}>
                           {STRATEGIES.map((s) => (
                             <span key={s.label} style={{ display: "flex", alignItems: "center", gap: "4px" }}>
@@ -532,8 +594,14 @@ export default function LottoMaxAI() {
                           ))}
                         </div>
                         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "8px", flexShrink: 0 }}>
-                          {h.modelTrained && <span style={{ fontFamily: FONT, fontSize: "8px", color: C.accent }}>LSTM</span>}
-                          <span style={{ fontFamily: FONT, fontSize: "8px", color: C.dim }}>{h.confidence}%</span>
+                          {h.mode === "ensemble" && h.modelTrained && <span style={{ fontFamily: FONT, fontSize: "8px", color: C.accent }}>LSTM</span>}
+                          <span style={{ fontFamily: FONT, fontSize: "8px", color: C.accent }}>{modeLabel(h.mode)}</span>
+                          {h.typical != null && (
+                            <span style={{ fontFamily: FONT, fontSize: "8px", color: h.typical ? C.good : C.bad }}>
+                              {h.typical ? "TYPICAL" : "NOT TYPICAL"}
+                            </span>
+                          )}
+                          {h.sum != null && <span style={{ fontFamily: FONT, fontSize: "8px", color: C.dim }}>SUM {h.sum}</span>}
                         </div>
                       </div>
                     );
@@ -725,7 +793,7 @@ export default function LottoMaxAI() {
             <div style={card}>
               <h3 style={h3}>STRATEGY WEIGHTS</h3>
               <p style={{ ...muted, marginBottom: "16px" }}>
-                Adjust each strategy&apos;s influence. Defaults follow the backtest (docs/RESEARCH.md):
+                ENSEMBLE 모드에서만 적용됩니다. Adjust each strategy&apos;s influence. Defaults follow the backtest (docs/RESEARCH.md):
                 Smart Pick highest, pair lowered, seed off.
               </p>
               {[
@@ -797,7 +865,7 @@ export default function LottoMaxAI() {
 
         {/* Footer */}
         <footer style={{ marginTop: "48px", textAlign: "center", fontFamily: FONT, fontSize: "8px", color: C.dim, lineHeight: 2 }}>
-          <p>LottoMax AI — LSTM + 7-Strategy Ensemble Engine</p>
+          <p>LottoMax AI — Typical-Set Generator · Smart Pick · 7-Strategy Ensemble (experimental)</p>
           <p style={{ marginTop: "4px" }}>
             정직 고지: 추첨은 완전한 무작위이며 어떤 전략도 번호 적중 확률을 높일 수 없습니다 (Backtest 탭에서 직접 확인 가능).
             Smart Pick은 당첨 시 <em>분배금 기대값</em>을 높이는 전략입니다.

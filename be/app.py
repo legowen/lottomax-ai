@@ -18,6 +18,12 @@ Strategies:
 Honesty note (docs/RESEARCH.md): the draw history passes every
 randomness test, and no strategy beats the 7*7/50 = 0.98 expected
 matches of a random ticket. The only real lever is EV optimization.
+
+Modes of POST /predict:
+  realistic  random ticket from the "typical set" (looks like a real draw) - generator.py
+  balanced   typical set + EV guard, random pick among the least popular - generator.py
+  smart_v2   random pick among the least popular guard-passing tickets   - ev_model.py
+  ensemble   legacy score-based top-7 (kept for transparency; API default)
 """
 
 import os
@@ -53,6 +59,7 @@ except ImportError:
 from backtest import run_walk_forward
 import data_ingest
 import ev_model
+import generator
 import signal_lab
 from lotto_config import (
     ERA2_START_DATE, ERA3_START_DATE, ERA2_POOL, CURRENT_POOL, TICKET_PRICE,
@@ -109,7 +116,7 @@ async def lifespan(_app):
     yield
 
 
-app = FastAPI(title="LottoMax AI", version="5.0", lifespan=lifespan)
+app = FastAPI(title="LottoMax AI", version="5.1", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins(),
@@ -492,16 +499,26 @@ def strategy_distribution(draws: list, num_range: int) -> np.ndarray:
     if len(recent) == 0:
         return scores
 
-    range_size = 10 if num_range <= 50 else 20
-    num_ranges = (num_range + range_size - 1) // range_size
+    # Five equal-width buckets (1-10 ... 41-50 for a 50-number pool). Each bucket's expected
+    # count is proportional to its WIDTH. The old fixed `range_size = 20` for pools > 50 made
+    # the last bucket 41-52 only 12 numbers wide but expected it to hold a third of all
+    # picks, so 41-52 looked "under-represented" forever and got a permanent bonus.
+    num_ranges = 5
+
+    def bucket(n):
+        return (n - 1) * num_ranges // num_range
+
+    widths = np.zeros(num_ranges)
+    for n in range(1, num_range + 1):
+        widths[bucket(n)] += 1
     range_counts = np.zeros(num_ranges)
     odd_count = 0
     even_count = 0
 
     for draw in recent:
         for n in draw:
-            idx = (n - 1) // range_size
-            if idx < num_ranges:
+            idx = bucket(n)
+            if 0 <= idx < num_ranges:
                 range_counts[idx] += 1
             if n % 2 == 0:
                 even_count += 1
@@ -509,14 +526,13 @@ def strategy_distribution(draws: list, num_range: int) -> np.ndarray:
                 odd_count += 1
 
     total_nums = sum(len(d) for d in recent)
-    expected = total_nums / num_ranges
 
     for n in range(1, num_range + 1):
-        idx = (n - 1) // range_size
-        if idx < num_ranges:
-            ratio = range_counts[idx] / expected if expected > 0 else 1
-            if ratio < 1:
-                scores[n] += (1 - ratio) * 0.5
+        idx = bucket(n)
+        expected = total_nums * widths[idx] / num_range
+        ratio = range_counts[idx] / expected if expected > 0 else 1
+        if ratio < 1:
+            scores[n] += (1 - ratio) * 0.5
 
         oe_total = odd_count + even_count
         if oe_total > 0:
@@ -1032,7 +1048,9 @@ def run_training(epochs: int, do_seed_analysis: bool = False):
 
 class PredictRequest(BaseModel):
     weights: Optional[dict] = None
-    mode: Literal["ensemble", "smart_v2"] = "ensemble"
+    # ensemble: legacy score-based picks (default kept for API backward compatibility)
+    # realistic / balanced: typical-set sampling (see generator.py); smart_v2: popularity sampling
+    mode: Literal["ensemble", "smart_v2", "realistic", "balanced"] = "ensemble"
 
 
 def sanitize_weights(weights: Optional[dict]) -> Optional[dict]:
@@ -1053,18 +1071,55 @@ def sanitize_weights(weights: Optional[dict]) -> Optional[dict]:
     return clean or None
 
 
+TYPICALITY_NOTE = ("전형 구간은 실제 추첨처럼 '보이는' 조합일 뿐입니다. "
+                   "모든 조합의 당첨 확률은 동일합니다.")
+
+
+def typicality_of(numbers: list) -> dict:
+    """Sum / odd / decade report for a ticket, with the honesty note attached."""
+    t = generator.describe(numbers, LOTTO_MAX)
+    t["note"] = TYPICALITY_NOTE
+    return t
+
+
 @app.post("/predict")
 def predict(req: PredictRequest = None):
     if len(state["main_draws"]) == 0:
         raise HTTPException(400, "No data loaded")
 
     req = req or PredictRequest()
+    if req.mode in ("realistic", "balanced"):
+        t = generator.sample_tickets(1, LOTTO_MAX, state.get("historical_sets"), mode=req.mode)[0]
+        ev_info = None
+        if req.mode == "balanced":
+            ev_info = {
+                "mode": "balanced",
+                "popularity_ratio": t["popularity_ratio"],
+                "low_count": t["low_count"],
+                "max_low": ev_model.EV_MAX_LOW,
+                "sum": t["sum"],
+                "guard_applied": True,
+                "share_risk": t["share_risk"],
+                "note": "popularity_ratio는 가정 기반 추정치입니다. 당첨 확률은 모든 조합이 동일합니다.",
+            }
+        main_result = {
+            "numbers": t["numbers"],
+            "confidence": None,   # there is no "confidence": every combination is equally likely
+            "strategies": {},
+            "ev_info": ev_info,
+            "typicality": typicality_of(t["numbers"]),
+        }
+        return {"main": main_result, "mode": req.mode,
+                "model_trained": state["main_model"] is not None,
+                "timestamp": datetime.now().isoformat()}
+
     if req.mode == "smart_v2":
         t = ev_model.smart_tickets(1, LOTTO_MAX, state.get("historical_sets"))[0]
         main_result = {
             "numbers": t["numbers"],
             "confidence": 0,
             "strategies": {},
+            "typicality": typicality_of(t["numbers"]),
             "ev_info": {
                 "mode": "smart_v2",
                 "popularity_ratio": t["popularity_ratio"],
@@ -1088,6 +1143,9 @@ def predict(req: PredictRequest = None):
         draws_dated=state.get("main_draws_dated"),
         historical_sets=state.get("historical_sets"),
     )
+    # The ensemble ranks numbers by score and takes the top 7, so it is not guaranteed to look
+    # like a real draw. Report typicality so the UI can say so honestly.
+    main_result["typicality"] = typicality_of(main_result["numbers"])
 
     return {
         "main": main_result,
@@ -1099,14 +1157,19 @@ def predict(req: PredictRequest = None):
 
 class BatchRequest(BaseModel):
     count: int = Field(5, ge=1, le=10)
+    mode: Literal["smart_v2", "realistic", "balanced"] = "smart_v2"
 
 
 @app.post("/predict-batch")
 def predict_batch(req: BatchRequest):
-    """1-10 Smart Pick v2 tickets, pairwise overlapping in at most 3 numbers."""
-    tickets = ev_model.smart_tickets(req.count, LOTTO_MAX, state.get("historical_sets"))
+    """1-10 tickets sampled at random (default: Smart Pick v2), pairwise overlapping in at most 3 numbers."""
+    if req.mode == "smart_v2":
+        tickets = ev_model.smart_tickets(req.count, LOTTO_MAX, state.get("historical_sets"))
+    else:
+        tickets = generator.sample_tickets(req.count, LOTTO_MAX, state.get("historical_sets"), mode=req.mode)
     return {
         "tickets": tickets,
+        "mode": req.mode,
         "note": "popularity_ratio는 가정 기반 추정치입니다. 당첨 확률은 모든 조합이 동일합니다.",
     }
 
