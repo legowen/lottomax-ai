@@ -14,3 +14,6 @@ Thumbs.db
 
 # Env
 .env
+
+# Data backups written by /data/append
+data/backup/

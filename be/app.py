@@ -26,21 +26,24 @@ import math
 import time
 import struct
 import logging
+import threading
+from contextlib import asynccontextmanager
 import numpy as np
 import pandas as pd
 from collections import Counter
 from datetime import datetime, timezone, timedelta
-from typing import Optional
+from typing import Optional, Literal
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 try:
     from tensorflow import keras
     from tensorflow.keras.models import Sequential
-    from tensorflow.keras.layers import LSTM, Dense, Dropout, Bidirectional, BatchNormalization
+    from tensorflow.keras.layers import LSTM, Dense, Dropout
+    from tensorflow.keras.regularizers import l2 as l2_reg
     from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
     TF_AVAILABLE = True
 except ImportError:
@@ -48,6 +51,13 @@ except ImportError:
     TF_AVAILABLE = False
 
 from backtest import run_walk_forward
+import data_ingest
+import ev_model
+import signal_lab
+from lotto_config import (
+    ERA2_START_DATE, ERA3_START_DATE, ERA2_POOL, CURRENT_POOL, TICKET_PRICE,
+    LINES_PER_TICKET, pool_for_date, combinations,
+)
 
 # ============================================================
 # Config
@@ -56,7 +66,7 @@ DATA_DIR = Path(__file__).parent.parent / "data"
 MODEL_DIR = Path(__file__).parent / "models"
 MODEL_DIR.mkdir(exist_ok=True)
 
-LOTTO_MAX = 50
+LOTTO_MAX = CURRENT_POOL  # 52 since 2026-04-14 (was 50 in 2019-05..2026-04)
 LOTTO_PICK = 7
 SEQUENCE_LENGTH = 20  # How many past draws the LSTM looks at
 HOT_COLD_WINDOW = 50
@@ -64,8 +74,10 @@ RECENT_WINDOW = 30
 
 # 2019-05-14: LottoMax switched from 7/49 weekly to 7/50 twice a week.
 # Statistics computed across that boundary are biased (e.g. number 50
-# only exists after it), so all strategies use era-2 draws only.
-ERA2_START_DATE = "2019-05-14"
+# only exists after it), so all strategies use era-2+ draws only.
+# 2026-04-14: pool grew again (7/52). Numbers 51 and 52 have only ~50 draws
+# of history, so statistical strategies treat them as neutral (see
+# neutralize_new_numbers). ERA2_START_DATE/ERA3_START_DATE live in lotto_config.
 
 # Overpicked "lucky" numbers (players' favourites — bad for EV)
 LUCKY_NUMBERS = {3, 7, 11, 13}
@@ -83,10 +95,24 @@ logger = logging.getLogger("lottomax-ai")
 # ============================================================
 # App
 # ============================================================
-app = FastAPI(title="LottoMax AI", version="4.0")
+DEFAULT_CORS = "http://localhost:5173,http://127.0.0.1:5173"
+
+
+def cors_origins() -> list:
+    raw = os.environ.get("LOTTOMAX_CORS_ORIGINS", DEFAULT_CORS)
+    return [o.strip() for o in raw.split(",") if o.strip()]
+
+
+@asynccontextmanager
+async def lifespan(_app):
+    startup()
+    yield
+
+
+app = FastAPI(title="LottoMax AI", version="5.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=cors_origins(),
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -104,6 +130,13 @@ state = {
     "last_trained": None,
     "seed_analysis": None,
     "backtest": None,
+    "main_draw_pools": [],   # number pool (49/50/52) in force for each era-2+ draw
+    "history_meta": {},      # frozenset(numbers) -> {"draw_number", "date"} (full history)
+    "history_list": [],      # [{"draw_number","date","numbers"}] full history, ordered
+    "lstm_verdict": None,
+    "signal_lab": None,
+    "signal_lab_progress": None,
+    "signal_lab_running": False,
 }
 
 
@@ -122,12 +155,16 @@ def load_csv_data():
     # Only main draws (SEQUENCE NUMBER == 0)
     df_main = df[df["SEQUENCE NUMBER"] == 0].sort_values("DRAW NUMBER")
     era2_ts = pd.Timestamp(ERA2_START_DATE)
-    all_draws, era_draws, era_dated = [], [], []
+    all_draws, era_draws, era_dated, era_pools = [], [], [], []
+    history_meta, history_list = {}, []
     bad_dates = 0
     for _, row in df_main.iterrows():
         nums = [int(row[f"NUMBER DRAWN {i}"]) for i in range(1, 8)]
         date_str = str(row.get("DRAW DATE", "")).strip().strip('"')
         all_draws.append(nums)
+        info = {"draw_number": int(row["DRAW NUMBER"]), "date": date_str}
+        history_meta[frozenset(nums)] = info
+        history_list.append({**info, "numbers": nums})
         parsed = pd.to_datetime(date_str, format="%Y-%m-%d", errors="coerce")
         if pd.isna(parsed):
             bad_dates += 1
@@ -135,6 +172,7 @@ def load_csv_data():
         if parsed >= era2_ts:
             era_draws.append(nums)
             era_dated.append({"numbers": nums, "date": date_str})
+            era_pools.append(pool_for_date(date_str))
     if bad_dates:
         logger.warning(f"{bad_dates} draws had unparseable dates and were excluded from era-2 stats")
 
@@ -142,10 +180,21 @@ def load_csv_data():
     state["main_draws"] = era_draws
     state["main_draws_dated"] = era_dated
     state["historical_sets"] = {frozenset(d) for d in all_draws}
+    state["main_draw_pools"] = era_pools
+    state["history_meta"] = history_meta
+    state["history_list"] = history_list
     logger.info(
         f"Loaded {len(all_draws)} draws total; using {len(era_draws)} "
-        f"era-2 (7/50, since {ERA2_START_DATE}) draws for statistics"
+        f"era-2+ (7/50 since {ERA2_START_DATE}, 7/52 since {ERA3_START_DATE}) draws for statistics"
     )
+
+
+def signal_lab_draws():
+    """Draws for Signal Lab: fixed 7/50 era only (Era 2), so 1..50 assumptions hold."""
+    pairs = [(d["numbers"], d["date"]) for d, p in zip(state["main_draws_dated"], state["main_draw_pools"])
+             if p == ERA2_POOL]
+    draws = [p[0] for p in pairs]
+    return draws, (pairs[-1][1] if pairs else None)
 
 
 def load_csv_data_with_dates():
@@ -184,38 +233,25 @@ def prepare_lstm_data(draws: list, num_range: int, seq_len: int = SEQUENCE_LENGT
     return np.array(X), np.array(y)
 
 
+LSTM_MAX_PARAMS = 50_000
+
+
 def build_lstm_model(num_range: int, seq_len: int = SEQUENCE_LENGTH):
     """
-    Build a Bidirectional LSTM model for lottery prediction.
+    Small LSTM (~14k parameters for 52 numbers).
 
-    Architecture designed to capture:
-    - Short-term patterns (recent draw correlations)
-    - Long-term patterns (cyclical tendencies)
-    - Inter-number relationships (which numbers appear together)
+    ~750 training samples cannot support a deep recurrent net (the previous
+    3-layer bidirectional stack had >500k parameters and memorised noise), so
+    this keeps one LSTM layer with L2 + dropout. Output: an independent
+    probability per number.
     """
     model = Sequential([
-        # First LSTM layer - captures broad temporal patterns
-        Bidirectional(
-            LSTM(128, return_sequences=True, input_shape=(seq_len, num_range)),
-        ),
-        BatchNormalization(),
+        LSTM(32, input_shape=(seq_len, num_range),
+             kernel_regularizer=l2_reg(1e-4), recurrent_regularizer=l2_reg(1e-4)),
         Dropout(0.3),
-
-        # Second LSTM layer - refines sequential patterns
-        Bidirectional(LSTM(64, return_sequences=True)),
-        BatchNormalization(),
-        Dropout(0.3),
-
-        # Third LSTM layer - final temporal encoding
-        LSTM(64, return_sequences=False),
-        BatchNormalization(),
-        Dropout(0.3),
-
-        # Dense layers - map temporal features to number probabilities
-        Dense(128, activation="relu"),
+        Dense(32, activation="relu", kernel_regularizer=l2_reg(1e-4)),
         Dropout(0.2),
-        Dense(64, activation="relu"),
-        Dense(num_range, activation="sigmoid"),  # Independent probability per number
+        Dense(num_range, activation="sigmoid"),
     ])
 
     model.compile(
@@ -225,8 +261,27 @@ def build_lstm_model(num_range: int, seq_len: int = SEQUENCE_LENGTH):
     )
 
     model.build(input_shape=(None, seq_len, num_range))
+    assert model.count_params() < LSTM_MAX_PARAMS, model.count_params()
 
     return model
+
+
+LSTM_VERDICT_MARGIN = 0.0005
+
+
+def constant_baseline_loss(p: float) -> float:
+    """BCE of always predicting the constant rate p: -(p ln p + (1-p) ln(1-p))."""
+    p = min(max(float(p), 1e-9), 1 - 1e-9)
+    return float(-(p * math.log(p) + (1 - p) * math.log(1 - p)))
+
+
+def make_lstm_verdict(val_loss: float, train_rate: float) -> dict:
+    baseline = constant_baseline_loss(train_rate)
+    return {
+        "val_loss": round(float(val_loss), 5),
+        "baseline_loss": round(baseline, 5),
+        "beats_constant_baseline": bool(val_loss < baseline - LSTM_VERDICT_MARGIN),
+    }
 
 
 def train_lstm(draws: list, num_range: int, model_name: str, epochs: int = 100):
@@ -272,6 +327,20 @@ def train_lstm(draws: list, num_range: int, model_name: str, epochs: int = 100):
     best_val_loss = min(history.history["val_loss"])
     final_epoch = len(history.history["loss"])
     log_msg(f"  ✅ Training complete: {final_epoch} epochs, val_loss={best_val_loss:.4f}")
+
+    # Honesty check: does the model beat "always predict the base rate"?
+    val_loss = float(model.evaluate(X_val, y_val, verbose=0)[0])
+    verdict = make_lstm_verdict(val_loss, float(y_train.mean()))
+    state["lstm_verdict"] = verdict
+    try:  # persist next to the model so the warning survives a restart
+        (MODEL_DIR / f"{model_name}.verdict.json").write_text(json.dumps(verdict))
+    except OSError:
+        pass
+    if verdict["beats_constant_baseline"]:
+        log_msg(f"  📈 Validation BCE {verdict['val_loss']} beats constant baseline {verdict['baseline_loss']}")
+    else:
+        log_msg(f"  ⚠️ Validation BCE {verdict['val_loss']} does NOT beat constant baseline "
+                f"{verdict['baseline_loss']} — no learnable signal (expected for random draws)")
 
     # Save model
     model_path = MODEL_DIR / f"{model_name}.keras"
@@ -711,9 +780,25 @@ def normalize(arr: np.ndarray) -> np.ndarray:
     return result
 
 
+def neutralize_new_numbers(scores: np.ndarray, old_pool: int = ERA2_POOL) -> np.ndarray:
+    """
+    Numbers above `old_pool` (51, 52) exist only in the 7/52 era (~50 draws), so
+    their statistics are too thin to compare with 1..50. Give them the average
+    score of the established numbers instead of letting noise rank them.
+    """
+    if len(scores) - 1 <= old_pool:
+        return scores
+    out = scores.copy()
+    base = out[1:old_pool + 1]
+    pos = base[base > 0]
+    out[old_pool + 1:] = pos.mean() if len(pos) else 0.0
+    return out
+
+
 def ensemble_predict(
     draws: list, num_range: int, pick_count: int,
-    lstm_model=None, weights=None, draws_dated=None, historical_sets=None
+    lstm_model=None, weights=None, draws_dated=None, historical_sets=None,
+    seed: Optional[int] = None
 ) -> dict:
     if len(draws) < 5:
         nums = list(np.random.choice(range(1, num_range + 1), pick_count, replace=False))
@@ -729,6 +814,8 @@ def ensemble_predict(
     s5 = strategy_distribution(draws, num_range)
     s6 = strategy_seed_analysis(draws_dated, num_range, pick_count) if draws_dated and w.get("seed", 0) > 0 else np.zeros(num_range + 1)
     s7 = strategy_smart_pick(num_range)
+    s1, s2, s3, s4, s5 = (neutralize_new_numbers(s) for s in (s1, s2, s3, s4, s5))
+    jitter_rng = np.random.default_rng(seed) if seed is not None else None
 
     # Normalize
     n1, n2, n3, n4, n5, n6, n7 = (normalize(s) for s in (s1, s2, s3, s4, s5, s6, s7))
@@ -746,7 +833,8 @@ def ensemble_predict(
             n7[i] * w.get("smart", 0)
         )
         # Small randomness for variety
-        combined[i] += np.random.uniform(0, 0.03)
+        combined[i] += (jitter_rng.uniform(0, 0.03) if jitter_rng is not None
+                        else np.random.uniform(0, 0.03))
 
     # Rank numbers by combined score
     ranked = sorted(range(1, num_range + 1), key=lambda n: -combined[n])
@@ -815,16 +903,27 @@ def log_msg(msg: str):
 # ============================================================
 # API Endpoints
 # ============================================================
-@app.on_event("startup")
-async def startup():
+def startup():
     load_csv_data()
     # Try loading existing model
     if TF_AVAILABLE:
         model_path = MODEL_DIR / "lottomax_main.keras"
         if model_path.exists():
             try:
-                state["main_model"] = keras.models.load_model(model_path)
-                log_msg("✅ Loaded existing model: lottomax_main")
+                model = keras.models.load_model(model_path)
+                if (model.output_shape[-1] != LOTTO_MAX
+                        or tuple(model.input_shape[1:]) != (SEQUENCE_LENGTH, LOTTO_MAX)):
+                    log_msg(f"⚠️ Saved model targets a {model.output_shape[-1]}-number pool, "
+                            f"not {LOTTO_MAX} — ignored, please retrain")
+                else:
+                    state["main_model"] = model
+                    log_msg("✅ Loaded existing model: lottomax_main")
+                    vpath = MODEL_DIR / "lottomax_main.verdict.json"
+                    if vpath.exists():
+                        try:
+                            state["lstm_verdict"] = json.loads(vpath.read_text())
+                        except (OSError, ValueError):
+                            pass
             except Exception as e:
                 log_msg(f"⚠️ Could not load lottomax_main: {e}")
     else:
@@ -838,9 +937,12 @@ def health():
         "main_draws": len(state["main_draws"]),
         "all_draws": len(state["all_draws"]),
         "era_start": ERA2_START_DATE,
+        "era3_start": ERA3_START_DATE,
+        "pool_size": LOTTO_MAX,
         "tf_available": TF_AVAILABLE,
         "main_model_loaded": state["main_model"] is not None,
         "last_trained": state["last_trained"],
+        "lstm_verdict": state["lstm_verdict"],
     }
 
 
@@ -851,12 +953,14 @@ def training_status():
         "progress": state["training_progress"],
         "log": state["training_log"][-30:],
         "main_model_ready": state["main_model"] is not None,
+        "lstm_verdict": state["lstm_verdict"],
     }
 
 
 class TrainRequest(BaseModel):
     epochs: int = 100
     weights: Optional[dict] = None
+    run_seed_analysis: bool = False  # ~650k seed generations; transparency demo only
 
 
 @app.post("/train")
@@ -869,11 +973,12 @@ async def train(req: TrainRequest, background_tasks: BackgroundTasks):
     # Claim the flag before returning: prevents two rapid POST /train
     # requests from both passing the check and training concurrently
     state["is_training"] = True
-    background_tasks.add_task(run_training, req.epochs)
-    return {"status": "training_started", "epochs": req.epochs}
+    background_tasks.add_task(run_training, req.epochs, req.run_seed_analysis)
+    return {"status": "training_started", "epochs": req.epochs,
+            "run_seed_analysis": req.run_seed_analysis}
 
 
-def run_training(epochs: int):
+def run_training(epochs: int, do_seed_analysis: bool = False):
     state["is_training"] = True
     state["training_log"] = []
 
@@ -896,15 +1001,18 @@ def run_training(epochs: int):
         log_msg("  ✅ Pair Correlation: Ready")
         log_msg("  ✅ Distribution Balance: Ready")
 
-        log_msg("\n🔑 Seed/RNG Analysis (transparency only — no predictive power)")
-        load_csv_data_with_dates()
-        if state.get("main_draws_dated"):
-            results = run_seed_analysis(state["main_draws_dated"], LOTTO_MAX, LOTTO_PICK, 20)
-            state["seed_analysis"] = results
-            log_msg(f"  Tested {results['tested_seeds']} seeds across 3 algorithms")
-            log_msg(f"  Perfect matches: {len(results['best_matches'])}")
-            log_msg(f"  Partial matches (4+): {len(results['partial_matches'])}")
-            log_msg("  ✅ Seed Analysis: Ready")
+        if do_seed_analysis:
+            log_msg("\n🔑 Seed/RNG Analysis (transparency only — no predictive power)")
+            load_csv_data_with_dates()
+            if state.get("main_draws_dated"):
+                results = run_seed_analysis(state["main_draws_dated"], LOTTO_MAX, LOTTO_PICK, 20)
+                state["seed_analysis"] = results
+                log_msg(f"  Tested {results['tested_seeds']} seeds across 3 algorithms")
+                log_msg(f"  Perfect matches: {len(results['best_matches'])}")
+                log_msg(f"  Partial matches (4+): {len(results['partial_matches'])}")
+                log_msg("  ✅ Seed Analysis: Ready")
+        else:
+            log_msg("\n🔑 Seed/RNG Analysis skipped (POST /seed-analysis to run it on demand)")
 
         log_msg("\n💰 Smart Pick (EV): Ready — avoids popular combos to reduce prize splitting")
 
@@ -924,6 +1032,7 @@ def run_training(epochs: int):
 
 class PredictRequest(BaseModel):
     weights: Optional[dict] = None
+    mode: Literal["ensemble", "smart_v2"] = "ensemble"
 
 
 def sanitize_weights(weights: Optional[dict]) -> Optional[dict]:
@@ -949,7 +1058,29 @@ def predict(req: PredictRequest = None):
     if len(state["main_draws"]) == 0:
         raise HTTPException(400, "No data loaded")
 
-    weights = sanitize_weights(req.weights if req else None)
+    req = req or PredictRequest()
+    if req.mode == "smart_v2":
+        t = ev_model.smart_tickets(1, LOTTO_MAX, state.get("historical_sets"))[0]
+        main_result = {
+            "numbers": t["numbers"],
+            "confidence": 0,
+            "strategies": {},
+            "ev_info": {
+                "mode": "smart_v2",
+                "popularity_ratio": t["popularity_ratio"],
+                "low_count": t["low_count"],
+                "max_low": ev_model.EV_MAX_LOW,
+                "sum": t["sum"],
+                "guard_applied": True,
+                "share_risk": t["share_risk"],
+                "note": "popularity_ratio는 가정 기반 추정치입니다. 당첨 확률은 모든 조합이 동일합니다.",
+            },
+        }
+        return {"main": main_result, "mode": "smart_v2",
+                "model_trained": state["main_model"] is not None,
+                "timestamp": datetime.now().isoformat()}
+
+    weights = sanitize_weights(req.weights)
 
     main_result = ensemble_predict(
         state["main_draws"], LOTTO_MAX, LOTTO_PICK,
@@ -960,9 +1091,211 @@ def predict(req: PredictRequest = None):
 
     return {
         "main": main_result,
+        "mode": "ensemble",
         "model_trained": state["main_model"] is not None,
         "timestamp": datetime.now().isoformat(),
     }
+
+
+class BatchRequest(BaseModel):
+    count: int = Field(5, ge=1, le=10)
+
+
+@app.post("/predict-batch")
+def predict_batch(req: BatchRequest):
+    """1-10 Smart Pick v2 tickets, pairwise overlapping in at most 3 numbers."""
+    tickets = ev_model.smart_tickets(req.count, LOTTO_MAX, state.get("historical_sets"))
+    return {
+        "tickets": tickets,
+        "note": "popularity_ratio는 가정 기반 추정치입니다. 당첨 확률은 모든 조합이 동일합니다.",
+    }
+
+
+class TicketRequest(BaseModel):
+    numbers: list[int] = Field(..., min_length=7, max_length=7)
+
+
+def _check_numbers(numbers: list) -> list:
+    if len(set(numbers)) != LOTTO_PICK or any(n < 1 or n > LOTTO_MAX for n in numbers):
+        raise HTTPException(422, f"numbers must be {LOTTO_PICK} distinct integers in 1..{LOTTO_MAX}")
+    return sorted(numbers)
+
+
+@app.post("/history-check")
+def history_check(req: TicketRequest):
+    """Compare a ticket with every past draw (full history). Past overlap says nothing about the future."""
+    from scipy import stats as sps
+    nums = frozenset(_check_numbers(req.numbers))
+    history = state["history_list"]
+    if not history:
+        raise HTTPException(400, "No data loaded")
+    hist = {str(k): 0 for k in range(LOTTO_PICK + 1)}
+    expected = {str(k): 0.0 for k in range(LOTTO_PICK + 1)}
+    exact, max_overlap = None, 0
+    for h in history:
+        ov = len(nums & set(h["numbers"]))
+        hist[str(ov)] += 1
+        max_overlap = max(max_overlap, ov)
+        if ov == LOTTO_PICK:
+            exact = {"draw_number": h["draw_number"], "date": h["date"]}
+    # Random-ticket expectation, draw by draw: the ticket has `m` numbers inside that
+    # draw's pool (numbers 51/52 cannot exist in older pools), so overlap is hypergeometric.
+    by_pool: dict = {}
+    for h in history:
+        pool = pool_for_date(h["date"])
+        by_pool[pool] = by_pool.get(pool, 0) + 1
+    for pool, cnt in by_pool.items():
+        m = sum(1 for n in nums if n <= pool)
+        pmf = sps.hypergeom(pool, m, LOTTO_PICK).pmf(range(LOTTO_PICK + 1))
+        for k in range(LOTTO_PICK + 1):
+            expected[str(k)] += cnt * float(pmf[k])
+    return {
+        "exact_match": exact,
+        "max_overlap": max_overlap,
+        "n_draws": len(history),
+        "overlap_histogram": hist,
+        "expected_histogram_random": {k: round(v, 2) for k, v in expected.items()},
+        "note": "과거 당첨 조합과 겹친다고 미래에 유리한 것은 아닙니다. 매 추첨은 독립입니다.",
+    }
+
+
+class EvRequest(BaseModel):
+    jackpot: float = Field(50_000_000, ge=0, allow_inf_nan=False)
+    tickets_sold: float = Field(25_000_000, ge=0, allow_inf_nan=False)
+    ticket_price: float = Field(TICKET_PRICE, gt=0, allow_inf_nan=False)
+    lines_per_ticket: int = Field(LINES_PER_TICKET, ge=1, le=100)
+    other_prizes_ev: float = Field(0.0, ge=0, allow_inf_nan=False)
+    numbers: Optional[list[int]] = None
+
+
+@app.post("/ev/estimate")
+def ev_estimate(req: EvRequest):
+    ratio = None
+    if req.numbers is not None:
+        if len(req.numbers) != LOTTO_PICK:
+            raise HTTPException(422, f"numbers must contain {LOTTO_PICK} values")
+        ratio = ev_model.popularity_ratio(_check_numbers(req.numbers), LOTTO_MAX,
+                                          state.get("historical_sets"))
+    return ev_model.ev_estimate(req.jackpot, req.tickets_sold, req.ticket_price,
+                                req.lines_per_ticket, req.other_prizes_ev, ratio, LOTTO_MAX)
+
+
+# ------------------------------------------------------------
+# Data ingest
+# ------------------------------------------------------------
+@app.get("/data/status")
+def data_status():
+    last = data_ingest.read_last_draw(DATA_DIR)
+    today = datetime.now().date()
+    days = (today - datetime.strptime(last["date"], "%Y-%m-%d").date()).days
+    return {
+        "last_draw_number": last["draw_number"],
+        "last_draw_date": last["date"],
+        "days_since_last": days,
+        "estimated_missing_draws": data_ingest.estimate_missing_draws(last["date"], today),
+        "era2_draws": len(state["main_draws"]),
+        "era3_draws": sum(1 for p in state["main_draw_pools"] if p == LOTTO_MAX),
+        "total_draws": len(state["all_draws"]),
+        "pool_size": LOTTO_MAX,
+    }
+
+
+class NewDraw(BaseModel):
+    draw_number: int
+    date: str
+    numbers: list[int]
+    bonus: int
+
+
+class AppendRequest(BaseModel):
+    draws: list[NewDraw] = Field(..., min_length=1, max_length=200)
+
+
+@app.post("/data/append")
+def data_append(req: AppendRequest):
+    if state["is_training"]:
+        raise HTTPException(400, "Training in progress — try again after it finishes")
+    last = data_ingest.read_last_draw(DATA_DIR)
+    valid, errors = data_ingest.validate_new_draws(
+        [d.model_dump() for d in req.draws], last["draw_number"], last["date"], last["existing"])
+    if not valid:
+        detail = "\n".join(f"{e['row']}번째 줄 (회차 {e['draw_number']}): {e['error']}" for e in errors)
+        raise HTTPException(400, detail or "추가할 유효한 회차가 없습니다")
+    backup = data_ingest.append_draws_to_csv(valid, DATA_DIR)
+    load_csv_data()
+    state["backtest"] = None
+    state["signal_lab"] = None
+    return {
+        "added": len(valid),
+        "rejected": errors,
+        "backup": backup.name if backup else None,
+        "total_draws": len(state["all_draws"]),
+        "era2_draws": len(state["main_draws"]),
+        "last_draw_number": valid[-1]["draw_number"],
+        "recommendation": "LSTM 재학습 권장 (Train LSTM Model). 백테스트·Signal Lab 결과는 초기화되었습니다.",
+    }
+
+
+# ------------------------------------------------------------
+# Signal Lab (background thread + progress)
+# ------------------------------------------------------------
+class SignalLabRequest(BaseModel):
+    seed: int = 42
+    quick: bool = False
+
+
+def _run_signal_lab(seed: int, quick: bool):
+    def progress(stage, done, total):
+        state["signal_lab_progress"] = {"stage": stage, "done": int(done), "total": int(total)}
+
+    try:
+        draws, last_date = signal_lab_draws()
+        result = signal_lab.run_signal_lab(draws, seed=seed, quick=quick, progress=progress,
+                                           last_draw_date=last_date)
+        state["signal_lab"] = result
+    except Exception as e:  # keep the flag honest even if something breaks
+        logger.exception("Signal Lab failed")
+        state["signal_lab"] = None
+        state["signal_lab_error"] = str(e)
+    finally:
+        state["signal_lab_progress"] = None
+        state["signal_lab_running"] = False
+
+
+_signal_lab_lock = threading.Lock()
+
+
+@app.post("/signal-lab/run")
+def signal_lab_run(req: SignalLabRequest = None):
+    req = req or SignalLabRequest()
+    with _signal_lab_lock:
+        if state["signal_lab_running"]:
+            raise HTTPException(400, "Signal Lab already running")
+        if len(state["main_draws"]) == 0:
+            raise HTTPException(400, "No data loaded")
+        state["signal_lab_running"] = True
+        state["signal_lab"] = None
+        state["signal_lab_error"] = None
+        state["signal_lab_progress"] = {"stage": "starting", "done": 0, "total": 1}
+    threading.Thread(target=_run_signal_lab, args=(req.seed, req.quick), daemon=True).start()
+    return {"status": "started", "seed": req.seed, "quick": req.quick}
+
+
+@app.get("/signal-lab/status")
+def signal_lab_status():
+    return {
+        "running": state["signal_lab_running"],
+        "has_result": state["signal_lab"] is not None,
+        "progress": state["signal_lab_progress"],
+        "error": state.get("signal_lab_error"),
+    }
+
+
+@app.get("/signal-lab/result")
+def signal_lab_result():
+    if state["signal_lab"] is None:
+        raise HTTPException(404, "No Signal Lab result yet — POST /signal-lab/run first")
+    return state["signal_lab"]
 
 
 @app.get("/frequencies")
@@ -1042,10 +1375,10 @@ def backtest(req: BacktestRequest = None):
     n_random = max(10, min(req.random_tickets, 500))
 
     strategies = {
-        "frequency": lambda d: strategy_frequency_recency(d, LOTTO_MAX),
-        "gap": lambda d: strategy_gap_analysis(d, LOTTO_MAX),
-        "pair": lambda d: strategy_pair_analysis(d, LOTTO_MAX),
-        "distribution": lambda d: strategy_distribution(d, LOTTO_MAX),
+        "frequency": lambda d: neutralize_new_numbers(strategy_frequency_recency(d, LOTTO_MAX)),
+        "gap": lambda d: neutralize_new_numbers(strategy_gap_analysis(d, LOTTO_MAX)),
+        "pair": lambda d: neutralize_new_numbers(strategy_pair_analysis(d, LOTTO_MAX)),
+        "distribution": lambda d: neutralize_new_numbers(strategy_distribution(d, LOTTO_MAX)),
         "smart": lambda d: strategy_smart_pick(LOTTO_MAX),
     }
 
@@ -1060,6 +1393,7 @@ def backtest(req: BacktestRequest = None):
         selectors={"smart": guarded_selector},
         ensemble_weights={k: DEFAULT_WEIGHTS.get(k, 0) for k in strategies},
         ensemble_selector=guarded_selector,
+        pools=state["main_draw_pools"],
     )
     state["backtest"] = results
     return results

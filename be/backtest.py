@@ -34,13 +34,16 @@ def _top_pick(scores: np.ndarray, pick: int) -> set:
     return set(ranked[:pick])
 
 
-def _summary(match_list, expected: float) -> dict:
+def _summary(match_list, expected) -> dict:
+    """`expected` is a scalar, or one expected-match value per evaluated draw."""
     arr = np.array(match_list, dtype=float)
     n = len(arr)
     mean = float(arr.mean())
-    std = float(arr.std(ddof=1)) if n > 1 else 0.0
+    exp_arr = np.broadcast_to(np.asarray(expected, dtype=float), arr.shape)
+    diff = arr - exp_arr
+    std = float(diff.std(ddof=1)) if n > 1 else 0.0
     if std > 0:
-        t = (mean - expected) / (std / math.sqrt(n))
+        t = float(diff.mean()) / (std / math.sqrt(n))
         p = math.erfc(abs(t) / math.sqrt(2))  # two-sided normal approximation
     else:
         t, p = 0.0, 1.0
@@ -49,13 +52,14 @@ def _summary(match_list, expected: float) -> dict:
         key = str(int(m)) if m < 3 else "3+"
         dist[key] += 1
     return {"mean": round(mean, 4), "std": round(std, 4),
+            "expected": round(float(exp_arr.mean()), 4),
             "t": round(t, 3), "p": round(p, 4), "dist": dist}
 
 
 def run_walk_forward(draws: list, num_range: int, pick: int, strategies: dict,
                      window: int = 150, n_random: int = 100, seed: int = 42,
                      selectors: dict = None, ensemble_weights: dict = None,
-                     ensemble_selector=None) -> dict:
+                     ensemble_selector=None, pools=None) -> dict:
     """
     draws: full ordered draw history (list of 7-number lists)
     strategies: {name: fn(history_draws) -> score array of len num_range+1}
@@ -66,6 +70,9 @@ def run_walk_forward(draws: list, num_range: int, pick: int, strategies: dict,
         Pass the production weights so the "ensemble" row measures the
         predictor the app actually ships (minus LSTM and jitter).
     ensemble_selector: optional fn(scores, pick) -> set for the ensemble row
+    pools: optional per-draw number pool (49/50/52). Numbers above a draw's pool
+        cannot match, so the chance expectation of a ticket is judged per draw as
+        (ticket numbers inside that pool) * pick / pool instead of a single constant.
     Returns per-strategy summaries plus the ensemble and a random baseline.
     """
     total = len(draws)
@@ -77,7 +84,17 @@ def run_walk_forward(draws: list, num_range: int, pick: int, strategies: dict,
 
     matches = {name: [] for name in strategies}
     matches["ensemble"] = []
+    expects = {name: [] for name in matches}
     random_means = []
+
+    def record(name, ticket, t):
+        actual = set(draws[t])
+        matches[name].append(len(ticket & actual))
+        if pools is not None:
+            pool = pools[t]
+            expects[name].append(sum(1 for n in ticket if n <= pool) * pick / pool)
+        else:
+            expects[name].append(expected)
 
     for t in range(start, total):
         history = draws[:t]
@@ -87,7 +104,7 @@ def run_walk_forward(draws: list, num_range: int, pick: int, strategies: dict,
             scores = fn(history)
             raw[name] = scores
             select = selectors.get(name, _top_pick)
-            matches[name].append(len(select(scores, pick) & actual))
+            record(name, select(scores, pick), t)
 
         if ensemble_weights:
             ens = sum(_normalize(raw[name].copy()) * ensemble_weights.get(name, 0)
@@ -95,7 +112,7 @@ def run_walk_forward(draws: list, num_range: int, pick: int, strategies: dict,
         else:
             ens = sum(_normalize(raw[name].copy()) for name in strategies) / len(strategies)
         ens_select = ensemble_selector or _top_pick
-        matches["ensemble"].append(len(ens_select(ens, pick) & actual))
+        record("ensemble", ens_select(ens, pick), t)
 
         hits = 0
         for _ in range(n_random):
@@ -103,7 +120,7 @@ def run_walk_forward(draws: list, num_range: int, pick: int, strategies: dict,
             hits += len(set(ticket.tolist()) & actual)
         random_means.append(hits / n_random)
 
-    results = {name: _summary(vals, expected) for name, vals in matches.items()}
+    results = {name: _summary(vals, expects[name]) for name, vals in matches.items()}
     random_mean = float(np.mean(random_means))
 
     beats = [name for name, r in results.items()
