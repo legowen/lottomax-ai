@@ -326,7 +326,7 @@ export default function LottoMaxAI() {
 
       <div style={{ position: "relative", maxWidth: "960px", margin: "0 auto", padding: "32px 24px" }}>
         {/* Header */}
-        {/* IMAGE PLACEHOLDER: 로고/히어로 이미지 자리 — 사용자가 추후 생성해 fe/src/assets/에 추가 예정
+        {/* IMAGE PLACEHOLDER: spot for a logo/hero image — to be generated later and added to fe/src/assets/
             <img src={heroImage} alt="LottoMax AI" style={{ maxWidth: "180px", margin: "0 auto" }} /> */}
         <header style={{ textAlign: "center", marginBottom: "8px" }}>
           <h1 style={{

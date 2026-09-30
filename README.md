@@ -2,17 +2,17 @@
 
 A LottoMax toolkit with an LSTM/statistical ensemble, a **falsifiable deep-learning "Signal Lab"**, an **EV-optimizing Smart Pick v2**, a jackpot **expected-value calculator**, and a safe **data-ingest** flow.
 
-> **정직 고지 / Honesty note** — 모든 번호 조합의 당첨 확률은 동일합니다. 리서치 결과([docs/RESEARCH.md](docs/RESEARCH.md)), 추첨 데이터는 모든 무작위성 검정을 통과했고 딥러닝 예측기·판별기·LSTM 어느 것도 상수 확률을 넘어서지 못했으며, 어떤 전략도 랜덤 티켓(기대 매치 7×7/N)을 이기지 못했습니다. 이 앱이 실제로 바꿀 수 있는 것은 **당첨 시 분배금 기대값(공동 당첨자 수)** 뿐이고, 그 효과도 *가정 기반 추정*입니다. **Signal Lab** 탭에서 "학습 가능한 신호가 없다"는 사실을 직접 검증할 수 있습니다.
+> **Honesty note** — Every number combination has exactly the same chance of winning. According to the research ([docs/RESEARCH.md](docs/RESEARCH.md)), the draw history passes every randomness test, no deep-learning predictor, discriminator or LSTM beats a constant probability, and no strategy beats a random ticket (expected matches 7×7/N). The only thing this app can actually change is the **expected payout when you win (how many co-winners share the jackpot)**, and even that effect is an *assumption-based estimate*. The **Signal Lab** tab lets you verify for yourself that there is no learnable signal.
 
 ## Game rules covered
 
-| 구간 | 기간 | 규칙 |
+| Era | Period | Rules |
 |---|---|---|
-| Era 1 | 2009-09-25 ~ 2019-05-10 | 7/49, 주 1회 |
-| Era 2 | 2019-05-14 ~ 2026-04-10 | 7/50, 주 2회 (화·금) |
-| **Era 3 (현재)** | **2026-04-14 ~** | **7/52, 주 2회, $6 / 4줄** (조합 수 C(52,7) = 133,784,560) |
+| Era 1 | 2009-09-25 – 2019-05-10 | 7/49, weekly |
+| Era 2 | 2019-05-14 – 2026-04-10 | 7/50, twice weekly (Tue/Fri) |
+| **Era 3 (current)** | **2026-04-14 –** | **7/52, twice weekly, $6 / 4 lines** (C(52,7) = 133,784,560 combinations) |
 
-통계 전략과 LSTM은 Era 2+3 (2019-05-14~)만 사용합니다. 51·52는 표본이 약 50회뿐이라 통계 전략에서 중립 점수로 취급합니다. Signal Lab은 풀이 고정된 Era 2만 사용합니다. (변경 근거: [RESEARCH.md §5.1](docs/RESEARCH.md))
+The statistical strategies and the LSTM use only Era 2+3 draws (from 2019-05-14). Numbers 51 and 52 have only ~50 draws of history, so the statistical strategies score them neutrally. Signal Lab uses only Era 2, where the number pool is fixed. (Evidence for the rule change: [RESEARCH.md §5.1](docs/RESEARCH.md), written in Korean.)
 
 ## Architecture
 
@@ -76,7 +76,7 @@ npm run dev                       # http://localhost:5173
 
 ### 3. Use the app
 
-1. **Settings → 데이터 업데이트**: paste new official results (`회차,날짜,번호1~7,보너스`, one per line). The CSV is backed up to `data/backup/` and replaced atomically.
+1. **Settings → Data update** (labelled "데이터 업데이트" in the UI): paste new official results (`draw number,date,7 numbers,bonus`, one per line, e.g. `1274,2026-09-29,3,9,14,22,31,40,47,12`). The CSV is backed up to `data/backup/` and replaced atomically.
 2. **Generate** → *Train LSTM Model* (~1 min) → *Generate Numbers*.
 3. **Signal Lab** → run the falsifiable deep-learning check (quick mode ≈ 3 s, full ≈ 1 min).
 4. **EV** → draw Smart Pick v2 tickets and estimate jackpot EV (enter the real jackpot / sales).
@@ -107,7 +107,7 @@ npm run dev                       # http://localhost:5173
 Designed so a "discovery" cannot be an overfit accident:
 
 1. **Battery** — 109 tests (uniformity, lag 1–5 overlap, pair co-occurrence, odd count, sum KS, per-number runs, per-number frequency) with **Benjamini–Hochberg** correction over all p-values.
-2. **Power check** — plants known effects in simulated uniform data and confirms the battery finds them; otherwise the verdict is "탐지기 신뢰 불가". Also reports the false-positive rate on pure noise.
+2. **Power check** — plants known effects in simulated uniform data and confirms the battery finds them; otherwise the verdict is "detector not trustworthy" ("탐지기 신뢰 불가" in the Korean UI). Also reports the false-positive rate on pure noise.
 3. **Predictor** — walk-forward expanding window, small MLP (TF) or NumPy logistic regression; judged by log-loss vs the constant 7/n baseline with a bootstrap CI and sign-permutation test. `beats_baseline` requires CI upper < 0.
 4. **Discriminator** — real vs random next draw, time-ordered split, AUC with bootstrap CI and permutation p-value.
 
@@ -143,7 +143,7 @@ CI (`.github/workflows/ci.yml`) runs both on every push.
 
 ## Updating Data
 
-Use **Settings → 데이터 업데이트** (or `POST /data/append`). Rows are validated (7 distinct numbers in the pool valid on that date, bonus not among them, increasing draw number and date, no duplicates); accepted rows are appended after a timestamped backup in `data/backup/`. Then retrain the LSTM. Nothing is scraped automatically.
+Use **Settings → Data update** (or `POST /data/append`). Rows are validated (7 distinct numbers in the pool valid on that date, bonus not among them, increasing draw number and date, no duplicates); accepted rows are appended after a timestamped backup in `data/backup/`. Then retrain the LSTM. Nothing is scraped automatically.
 
 ---
 

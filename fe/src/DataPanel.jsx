@@ -8,7 +8,7 @@ const btnStyle = (disabled) => ({
   color: "#ffffff", fontWeight: 700, cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.6 : 1,
 });
 
-// 한 줄 형식: 회차,날짜,번호1..번호7,보너스  예) 1274,2026-09-29,3,9,14,22,31,40,47,12
+// One draw per line: draw number, date, numbers 1..7, bonus  e.g. 1274,2026-09-29,3,9,14,22,31,40,47,12
 function parseLines(text) {
   const draws = [];
   const errors = [];
