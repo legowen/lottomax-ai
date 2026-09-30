@@ -28,9 +28,17 @@ await page.waitForSelector("text=/BOMI PICKS #\\d/", { timeout: 10000 });
 console.log("✅ Bomi reveal started");
 await page.click("text=/^SKIP/");
 await page.waitForSelector("text=ALL SET! GOOD LUCK!", { timeout: 5000 });
-await page.waitForSelector("text=SMART PICK ON", { timeout: 20000 });
-console.log("✅ SKIP works, prediction rendered, EV panel visible");
+await page.waitForSelector("text=TYPICAL SET", { timeout: 20000 });
+console.log("✅ SKIP works, prediction rendered, typicality panel visible (default mode REALISTIC)");
 await page.screenshot({ path: `${SHOT_DIR}/e2e_generate.png` });
+
+// BALANCED mode -> typical set + EV guard panel
+await page.getByRole("button", { name: /^(> )?BALANCED$/ }).click();
+await page.click("text=GENERATE NUMBERS");
+await page.waitForSelector("text=/BOMI PICKS #\\d/", { timeout: 20000 });
+await page.click("text=/^SKIP/");
+await page.waitForSelector("text=SMART PICK ON", { timeout: 20000 });
+console.log("✅ balanced mode: EV panel visible");
 
 // Backtest tab -> results table + verdict
 await tab("backtest").click();

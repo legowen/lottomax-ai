@@ -1,6 +1,6 @@
-# 🎰 LottoMax AI — Signal Lab · Smart Pick v2 · EV Calculator (v5.0)
+# 🎰 LottoMax AI — Typical-Set Generator · Signal Lab · Smart Pick v2 · EV Calculator (v5.1)
 
-A LottoMax toolkit with an LSTM/statistical ensemble, a **falsifiable deep-learning "Signal Lab"**, an **EV-optimizing Smart Pick v2**, a jackpot **expected-value calculator**, and a safe **data-ingest** flow.
+A LottoMax toolkit with a **typical-set ticket generator** (tickets that look like real draws), an LSTM/statistical ensemble (experimental), a **falsifiable deep-learning "Signal Lab"**, an **EV-optimizing Smart Pick v2**, a jackpot **expected-value calculator**, and a safe **data-ingest** flow.
 
 > **Honesty note** — Every number combination has exactly the same chance of winning. According to the research ([docs/RESEARCH.md](docs/RESEARCH.md)), the draw history passes every randomness test, no deep-learning predictor, discriminator or LSTM beats a constant probability, and no strategy beats a random ticket (expected matches 7×7/N). The only thing this app can actually change is the **expected payout when you win (how many co-winners share the jackpot)**, and even that effect is an *assumption-based estimate*. The **Signal Lab** tab lets you verify for yourself that there is no learnable signal.
 
@@ -29,12 +29,27 @@ The statistical strategies and the LSTM use only Era 2+3 draws (from 2019-05-14)
 │                  discriminator (seeded, falsifiable)  │
 │  ev_model.py     popularity model, Smart Pick v2,     │
 │                  Poisson jackpot-sharing EV           │
+│  generator.py    typical-set sampling (realistic,     │
+│                  balanced), exact sum distribution    │
 │  data_ingest.py  validate → backup → atomic CSV append│
 │  backtest.py     walk-forward vs random ticket        │
 └──────────────────────────────────────────────────────┘
 ```
 
+## Generation modes (`POST /predict`)
+
+| Mode | What it does | Note |
+|---|---|---|
+| `realistic` (UI default) | Uniform random ticket from the **typical set**: sum inside the central 90% of its exact distribution (124–247 for 7/52), 2–5 odd numbers, numbers in at least 4 of the 10-wide groups (1–10, 11–20, …) | Looks like a real draw; win probability is unchanged |
+| `balanced` | Typical set **+ EV guard** (≤ 4 numbers ≤ 31, no 3-run, never a past winner), then a random pick among the least popular 25% | Fewer co-winners *if* the popularity assumptions hold |
+| `smart_v2` | Random pick among the least popular 10% of guard-passing candidates | See Smart Pick v2 below |
+| `ensemble` (API default) | Legacy: top 7 numbers by the weighted 7-strategy score | Experimental — repeats and clusters (reported as NOT TYPICAL) |
+
+Every mode picks at random except `ensemble`, which ranks scores; **none of them can raise the chance of winning** — each combination has probability 1 / C(52, 7). The API default stays `ensemble` for backward compatibility; the UI sends `realistic` unless you pick another mode. Every `/predict` response carries `main.typicality` (sum, odd count, occupied decade groups, typical yes/no). Details and tests: [RESEARCH.md Stage 6](docs/RESEARCH.md).
+
 ## Strategies (ensemble, `mode: "ensemble"`)
+
+> **Experimental.** The ensemble scores every number and takes the top 7, so it repeats the same tickets and piles onto one region of the pool (see [RESEARCH.md Stage 6](docs/RESEARCH.md)). Use `realistic` / `balanced` for tickets that look like real draws.
 
 | # | Strategy | Default weight | Note |
 |---|---|---|---|
@@ -77,7 +92,7 @@ npm run dev                       # http://localhost:5173
 ### 3. Use the app
 
 1. **Settings → Data update** (labelled "데이터 업데이트" in the UI): paste new official results (`draw number,date,7 numbers,bonus`, one per line, e.g. `1274,2026-09-29,3,9,14,22,31,40,47,12`). The CSV is backed up to `data/backup/` and replaced atomically.
-2. **Generate** → *Train LSTM Model* (~1 min) → *Generate Numbers*.
+2. **Generate** → pick a mode (default *REALISTIC*) → *Generate Numbers*. Only the *ENSEMBLE* mode uses the LSTM: select it and press *Train LSTM Model* (~1 min) first.
 3. **Signal Lab** → run the falsifiable deep-learning check (quick mode ≈ 3 s, full ≈ 1 min).
 4. **EV** → draw Smart Pick v2 tickets and estimate jackpot EV (enter the real jackpot / sales).
 
@@ -109,7 +124,7 @@ npm run dev                       # http://localhost:5173
 - 8000만 계속 쓸 수 없다면 `set LOTTOMAX_PORT=8010` 후 실행합니다.
 
 ### CSV 데이터를 업데이트한 뒤에는
-`data/LOTTOMAX.csv`를 수정하거나 Settings → 데이터 업데이트로 회차를 추가한 뒤에는 **Generate 탭의 Train 버튼을 다시 눌러 LSTM을 재학습**하세요. (이전 모델은 예전 데이터로 학습되어 있습니다.)
+`data/LOTTOMAX.csv`를 수정하거나 Settings → 데이터 업데이트로 회차를 추가한 뒤에는 **Generate 탭에서 ENSEMBLE 모드를 고르고 Train 버튼을 다시 눌러 LSTM을 재학습**하세요. (이전 모델은 예전 데이터로 학습되어 있습니다. REALISTIC · BALANCED · SMART V2 모드는 LSTM을 쓰지 않으므로 재학습이 필요 없습니다.)
 
 ## API Endpoints
 
@@ -118,8 +133,8 @@ npm run dev                       # http://localhost:5173
 | GET | `/` | Health, server info, `lstm_verdict` |
 | GET | `/status` | Training progress, logs, `lstm_verdict` |
 | POST | `/train` | Train LSTM (`{"epochs":100,"run_seed_analysis":false}`) |
-| POST | `/predict` | `{"mode":"ensemble"\|"smart_v2","weights":{...}}` |
-| POST | `/predict-batch` | `{"count":1..10}` Smart Pick v2 tickets, pairwise overlap ≤ 3 |
+| POST | `/predict` | `{"mode":"realistic"\|"balanced"\|"smart_v2"\|"ensemble","weights":{...}}` — `weights` only affect `ensemble`; the response has `main.typicality` |
+| POST | `/predict-batch` | `{"count":1..10,"mode":"smart_v2"\|"realistic"\|"balanced"}` tickets, pairwise overlap ≤ 3 |
 | POST | `/history-check` | `{"numbers":[7]}` exact-match / overlap histogram vs all past draws |
 | POST | `/ev/estimate` | Jackpot EV with Poisson co-winner sharing (assumption-based) |
 | GET | `/frequencies` | Number frequency analysis |
@@ -173,7 +188,7 @@ CI (`.github/workflows/ci.yml`) runs both on every push.
 
 ## Updating Data
 
-Use **Settings → Data update** (or `POST /data/append`). Rows are validated (7 distinct numbers in the pool valid on that date, bonus not among them, increasing draw number and date, no duplicates); accepted rows are appended after a timestamped backup in `data/backup/`. Then retrain the LSTM. Nothing is scraped automatically.
+Use **Settings → Data update** (or `POST /data/append`). Rows are validated (7 distinct numbers in the pool valid on that date, bonus not among them, increasing draw number and date, no duplicates); accepted rows are appended after a timestamped backup in `data/backup/`. Then retrain the LSTM (only the ENSEMBLE mode uses it). Nothing is scraped automatically.
 
 ---
 
