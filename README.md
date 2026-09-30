@@ -81,6 +81,36 @@ npm run dev                       # http://localhost:5173
 3. **Signal Lab** → run the falsifiable deep-learning check (quick mode ≈ 3 s, full ≈ 1 min).
 4. **EV** → draw Smart Pick v2 tickets and estimate jackpot EV (enter the real jackpot / sales).
 
+## 로컬에서 실행하기 (Running locally)
+
+이 앱은 **내 PC에서만** 쓰도록 만들어졌습니다. 백엔드는 `127.0.0.1`, 프론트엔드는 `localhost`에만 열리므로 같은 네트워크의 다른 기기나 외부에서 접속할 수 없습니다. **원격 접속은 지원하지 않습니다** (배포용이 아닙니다).
+
+### 처음 한 번만
+- **Python 3.10~3.12** (TensorFlow 때문에 3.13 이상은 안 됩니다)와 **Node.js 18+** 를 설치합니다.
+- 별도 설정은 필요 없습니다. `start.bat`(또는 `start.sh`)이 처음 실행될 때 `be/venv`를 만들고 `requirements.txt`를 설치하며(TensorFlow 때문에 몇 분 걸림), `fe/node_modules`가 없으면 `npm install`도 자동으로 실행합니다.
+
+### 실행 방법
+- **Windows**: 저장소 루트의 `start.bat`을 더블클릭합니다.
+- **Git Bash**: `./start.sh`
+- 백엔드가 응답할 때까지(최대 60초) 기다린 뒤 프론트엔드를 켜고 기본 브라우저로 `http://localhost:5173`을 엽니다.
+- 종료: 창을 닫거나 Ctrl+C (`start.bat`은 아무 키). 두 서버가 모두 함께 종료됩니다.
+- 문제가 생기면 창에 원인이 출력되고, 전체 로그는 `.launcher-logs/`에 저장됩니다.
+- 백엔드 포트를 바꾸려면 환경변수 `LOTTOMAX_PORT`를 지정합니다 (기본 8000). 프론트엔드 포트는 5173 고정입니다.
+
+### 바탕화면 바로가기 만들기
+1. 탐색기에서 `start.bat`을 우클릭 → **보내기 → 바탕 화면에 바로 가기 만들기**
+2. 바로가기를 우클릭 → **속성**에서 이름을 "LottoMax AI"로 바꾸고, 필요하면 **아이콘 변경**을 선택합니다.
+3. 바로가기 대신 파일을 옮기지 마세요. `start.bat`은 자기 위치 기준으로 동작하므로 저장소 폴더 안에 있어야 합니다.
+
+### 포트 충돌 해결
+8000 또는 5173 포트가 이미 사용 중이면 어느 포트가 문제인지 출력하고 멈춥니다.
+- 이미 켜져 있는 LottoMax 창이 있으면 먼저 닫습니다.
+- 그래도 사용 중이면 PowerShell/명령 프롬프트에서 `netstat -ano | findstr :8000` 으로 PID를 찾고 `taskkill /F /PID <PID>` 로 종료합니다 (5173도 동일).
+- 8000만 계속 쓸 수 없다면 `set LOTTOMAX_PORT=8010` 후 실행합니다.
+
+### CSV 데이터를 업데이트한 뒤에는
+`data/LOTTOMAX.csv`를 수정하거나 Settings → 데이터 업데이트로 회차를 추가한 뒤에는 **Generate 탭의 Train 버튼을 다시 눌러 LSTM을 재학습**하세요. (이전 모델은 예전 데이터로 학습되어 있습니다.)
+
 ## API Endpoints
 
 | Method | Endpoint | Description |

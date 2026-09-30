@@ -8,7 +8,7 @@ import DataPanel from "./DataPanel";
 // Connects to FastAPI backend with real LSTM 7-Strategy ensemble
 // ============================================================
 
-const API = "http://localhost:8000";
+const API = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
 // Ball colors by number range
 const getBallColor = (num) => {

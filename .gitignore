@@ -17,3 +17,6 @@ Thumbs.db
 
 # Data backups written by /data/append
 data/backup/
+
+# Launcher logs
+.launcher-logs/
