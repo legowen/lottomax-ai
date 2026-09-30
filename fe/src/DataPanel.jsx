@@ -1,12 +1,7 @@
 import { useState, useEffect } from "react";
-
-const card = { background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 16, padding: 20, marginBottom: 16 };
-const muted = { color: "#94a3b8", fontSize: 13 };
-const btnStyle = (disabled) => ({
-  padding: "10px 18px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.2)",
-  background: disabled ? "rgba(255,255,255,0.05)" : "linear-gradient(135deg,#f59e0b,#ef4444)",
-  color: "#ffffff", fontWeight: 700, cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.6 : 1,
-});
+import PixelButton from "./pixel/PixelButton";
+import { C, FONT, pixelBox } from "./pixel/theme";
+import { card, muted, h3 } from "./pixel/styles";
 
 // One draw per line: draw number, date, numbers 1..7, bonus  e.g. 1274,2026-09-29,3,9,14,22,31,40,47,12
 function parseLines(text) {
@@ -68,11 +63,11 @@ export default function DataPanel({ API }) {
 
   return (
     <div style={card}>
-      <h3 style={{ margin: "0 0 8px", color: "#ffffff", fontSize: 16 }}>데이터 업데이트</h3>
+      <h3 style={h3}>데이터 업데이트</h3>
       {info && (
-        <div style={{ ...muted, marginBottom: 8, lineHeight: 1.7 }}>
+        <div style={{ ...muted, marginBottom: 12 }}>
           마지막 회차 {info.last_draw_number} ({info.last_draw_date}) · {info.days_since_last}일 경과 ·{" "}
-          <span style={{ color: stale ? "#fbbf24" : "#4ade80" }}>
+          <span style={{ color: stale ? C.accent : C.good }}>
             {stale ? `누락 추정 약 ${info.estimated_missing_draws}회` : "최신 상태"}
           </span>
         </div>
@@ -83,14 +78,15 @@ export default function DataPanel({ API }) {
         placeholder={"회차,날짜,번호1~7,보너스 (한 줄에 한 회차)\n1274,2026-09-29,3,9,14,22,31,40,47,12"}
         rows={5}
         style={{
-          width: "100%", padding: "10px 12px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.15)",
-          background: "rgba(0,0,0,0.3)", color: "#ffffff", fontSize: 13, fontFamily: "monospace", boxSizing: "border-box",
+          ...pixelBox(C.shadow, C.dim, 2, false),
+          width: "calc(100% - 4px)", padding: "10px 12px", border: "none", outline: "none",
+          color: C.ink, fontSize: 8, lineHeight: 1.8, fontFamily: FONT, boxSizing: "border-box",
         }}
       />
-      <div style={{ marginTop: 10 }}>
-        <button style={btnStyle(busy)} disabled={busy} onClick={submit}>{busy ? "추가 중..." : "회차 추가"}</button>
+      <div style={{ marginTop: 12 }}>
+        <PixelButton disabled={busy} onClick={submit}>{busy ? "추가 중..." : "회차 추가"}</PixelButton>
       </div>
-      {message && <pre style={{ ...muted, whiteSpace: "pre-wrap", marginTop: 10 }}>{message}</pre>}
+      {message && <pre style={{ ...muted, whiteSpace: "pre-wrap", marginTop: 12 }}>{message}</pre>}
     </div>
   );
 }

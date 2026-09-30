@@ -1,20 +1,7 @@
 import { useState, useEffect, useRef } from "react";
-
-const card = { background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 16, padding: 20, marginBottom: 16 };
-const muted = { color: "#94a3b8", fontSize: 13 };
-const th = { textAlign: "left", padding: "8px", color: "#94a3b8", fontSize: 12, borderBottom: "1px solid rgba(255,255,255,0.1)" };
-const td = { padding: "8px", fontSize: 13, color: "#e2e8f0", borderBottom: "1px solid rgba(255,255,255,0.05)" };
-const btnStyle = (disabled) => ({
-  padding: "10px 18px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.2)",
-  background: disabled ? "rgba(255,255,255,0.05)" : "linear-gradient(135deg,#f59e0b,#ef4444)",
-  color: "#ffffff", fontWeight: 700, cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.6 : 1,
-});
-const badge = (ok) => ({
-  display: "inline-block", padding: "2px 10px", borderRadius: 999, fontSize: 12, fontWeight: 700,
-  background: ok ? "rgba(34,197,94,0.15)" : "rgba(239,68,68,0.15)",
-  color: ok ? "#4ade80" : "#f87171",
-  border: `1px solid ${ok ? "rgba(34,197,94,0.4)" : "rgba(239,68,68,0.4)"}`,
-});
+import PixelButton from "./pixel/PixelButton";
+import { C } from "./pixel/theme";
+import { card, muted, body, errorText, h2, h3, th, td, badge } from "./pixel/styles";
 
 export default function SignalLab({ API }) {
   const [status, setStatus] = useState(null);
@@ -75,24 +62,24 @@ export default function SignalLab({ API }) {
   return (
     <div>
       <div style={card}>
-        <h2 style={{ margin: "0 0 8px", color: "#ffffff", fontSize: 20 }}>Signal Lab</h2>
-        <p style={{ ...muted, margin: "0 0 12px", lineHeight: 1.6 }}>
+        <h2 style={h2}>SIGNAL LAB</h2>
+        <p style={{ ...muted, margin: "0 0 16px" }}>
           딥러닝과 통계 검정으로 역대 추첨에 학습 가능한 패턴이 있는지 검증합니다.
           먼저 가짜 신호를 심어 탐지기가 실제로 작동하는지 확인한 뒤(탐지력 검증), 실제 데이터를 검사합니다.
         </p>
-        <label style={{ ...muted, display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-          <input type="checkbox" checked={quick} onChange={(e) => setQuick(e.target.checked)} />
+        <label style={{ ...muted, display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
+          <input type="checkbox" checked={quick} onChange={(e) => setQuick(e.target.checked)} style={{ accentColor: C.accent }} />
           빠른 실행 (부트스트랩/순열 횟수 축소)
         </label>
-        <button style={btnStyle(running)} disabled={running} onClick={run}>
+        <PixelButton disabled={running} onClick={run}>
           {running ? "분석 중..." : "Signal Lab 실행"}
-        </button>
+        </PixelButton>
         {progress && running && (
           <div style={{ ...muted, marginTop: 12 }}>
             {progress.stage} — {progress.done}/{progress.total}
           </div>
         )}
-        {error && <div style={{ color: "#f87171", marginTop: 12, fontSize: 13 }}>{error}</div>}
+        {error && <div style={{ ...errorText, marginTop: 12 }}>{error}</div>}
       </div>
 
       {result && (
@@ -106,14 +93,14 @@ export default function SignalLab({ API }) {
                 {result.predictor.beats_baseline || result.battery.n_significant_after_bh > 0 ? "신호 후보 발견 — 재검증 필요" : "학습 가능한 신호 없음"}
               </span>
             </div>
-            <p style={{ color: "#e2e8f0", fontSize: 14, lineHeight: 1.7, margin: 0 }}>{result.verdict}</p>
+            <p style={{ ...body, margin: 0 }}>{result.verdict}</p>
             <div style={{ ...muted, marginTop: 8 }}>
               Era 2 · {result.n_draws}회 · 마지막 추첨 {result.last_draw_date}
             </div>
           </div>
 
           <div style={card}>
-            <h3 style={{ margin: "0 0 8px", color: "#ffffff", fontSize: 16 }}>통계 검정 배터리</h3>
+            <h3 style={h3}>통계 검정 배터리</h3>
             <div style={{ ...muted, marginBottom: 8 }}>
               검정 {result.battery.n_tests}개 중 BH 보정 후 유의 {result.battery.n_significant_after_bh}개
               (우연히 기대되는 수 약 {result.battery.expected_false_positives})
@@ -145,8 +132,8 @@ export default function SignalLab({ API }) {
           </div>
 
           <div style={card}>
-            <h3 style={{ margin: "0 0 8px", color: "#ffffff", fontSize: 16 }}>딥러닝 예측기 · 판별기</h3>
-            <div style={{ ...muted, lineHeight: 1.8 }}>
+            <h3 style={h3}>딥러닝 예측기 · 판별기</h3>
+            <div style={{ ...muted }}>
               예측기({result.predictor.model}): 손실 {Number(result.predictor.mean_logloss).toFixed(4)} vs 상수 기준선{" "}
               {Number(result.predictor.baseline_logloss).toFixed(4)} · 차이 {Number(result.predictor.delta).toFixed(4)}{" "}
               (95% CI {Number(result.predictor.ci95[0]).toFixed(4)} ~ {Number(result.predictor.ci95[1]).toFixed(4)}, p={Number(result.predictor.p_value).toFixed(3)})
@@ -157,7 +144,7 @@ export default function SignalLab({ API }) {
           </div>
 
           <div style={card}>
-            <h3 style={{ margin: "0 0 8px", color: "#ffffff", fontSize: 16 }}>탐지력 검증 (가짜 신호 심기)</h3>
+            <h3 style={h3}>탐지력 검증 (가짜 신호 심기)</h3>
             {result.power_check.planted.map((p) => (
               <div key={p.effect} style={{ ...muted, marginBottom: 4 }}>
                 {p.effect}: <span style={badge(p.detected)}>{p.detected ? "검출됨" : "놓침"}</span> (p_BH={Number(p.p_adj_bh).toFixed(4)})
