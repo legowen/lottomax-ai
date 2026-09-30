@@ -15,18 +15,26 @@ page.on("pageerror", (e) => errors.push("pageerror: " + e.message));
 page.on("console", (m) => { if (m.type() === "error") errors.push("console: " + m.text()); });
 
 await page.goto("http://localhost:4173", { waitUntil: "networkidle" });
-await page.waitForSelector("text=Connected", { timeout: 15000 });
+await page.waitForSelector("text=CONNECTED", { timeout: 15000 });
 console.log("✅ connected to backend");
 
-// Generate numbers -> prediction + EV panel render
-await page.click("text=Generate Numbers");
-await page.waitForSelector("text=Smart Pick ON", { timeout: 20000 });
-console.log("✅ prediction rendered, EV panel visible");
+// Tabs are PixelTabs buttons; the active one is prefixed with "> "
+const tab = (name) => page.getByRole("button", { name: new RegExp(`^(> )?${name}$`, "i") });
+
+// Generate numbers -> Bomi reveals the balls, SKIP finishes, EV panel renders afterwards
+await page.click("text=GENERATE NUMBERS");
+await page.waitForSelector("text=BOMI", { timeout: 20000 });
+await page.waitForSelector("text=/BOMI PICKS #\\d/", { timeout: 10000 });
+console.log("✅ Bomi reveal started");
+await page.click("text=/^SKIP/");
+await page.waitForSelector("text=ALL SET! GOOD LUCK!", { timeout: 5000 });
+await page.waitForSelector("text=SMART PICK ON", { timeout: 20000 });
+console.log("✅ SKIP works, prediction rendered, EV panel visible");
 await page.screenshot({ path: `${SHOT_DIR}/e2e_generate.png` });
 
 // Backtest tab -> results table + verdict
-await page.click("nav >> text=backtest");
-await page.click("text=Run Backtest");
+await tab("backtest").click();
+await page.click("text=RUN BACKTEST");
 await page.waitForSelector("table", { timeout: 60000 });
 const rows = await page.locator("tbody tr").count();
 if (rows < 6) throw new Error(`expected 6 backtest rows, got ${rows}`);
@@ -34,20 +42,20 @@ console.log("✅ backtest table rows:", rows);
 await page.screenshot({ path: `${SHOT_DIR}/e2e_backtest.png` });
 
 // Analysis tab renders without crash
-await page.click("nav >> text=analysis");
-await page.waitForSelector("text=Hot Numbers", { timeout: 15000 });
+await tab("analysis").click();
+await page.waitForSelector("text=HOT NUMBERS", { timeout: 15000 });
 console.log("✅ analysis tab ok");
 
 // Signal Lab tab renders (run button + honesty copy), without starting the long job
-await page.click('nav >> text="signal"');
+await tab("signal").click();
 await page.waitForSelector("text=Signal Lab 실행", { timeout: 10000 });
 await page.waitForSelector("text=탐지력 검증", { timeout: 10000 });
 console.log("✅ signal tab renders");
 await page.screenshot({ path: `${SHOT_DIR}/e2e_signal.png` });
 
 // EV tab: draw Smart Pick v2 tickets, compute EV for the first one
-await page.click('nav >> text="ev"');
-await page.waitForSelector("text=Smart Pick v2", { timeout: 10000 });
+await tab("ev").click();
+await page.waitForSelector("text=SMART PICK V2", { timeout: 10000 });
 await page.click("text=번호 뽑기");
 await page.waitForSelector("text=이 번호로 EV 계산", { timeout: 20000 });
 const ticketRows = await page.locator("text=이 번호로 EV 계산").count();
@@ -58,7 +66,7 @@ console.log("✅ ev tab: tickets + EV calculation rendered");
 await page.screenshot({ path: `${SHOT_DIR}/e2e_ev.png` });
 
 // Settings shows all 7 strategies incl. Smart Pick
-await page.click("nav >> text=settings");
+await tab("settings").click();
 await page.waitForSelector("text=Smart Pick (EV)", { timeout: 10000 });
 console.log("✅ settings shows Smart Pick");
 await page.waitForSelector("text=데이터 업데이트", { timeout: 10000 });

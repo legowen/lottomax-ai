@@ -2,6 +2,14 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import SignalLab from "./SignalLab";
 import EvTab from "./EvTab";
 import DataPanel from "./DataPanel";
+import Sprite from "./pixel/Sprite";
+import PixelBall from "./pixel/PixelBall";
+import PixelButton from "./pixel/PixelButton";
+import PixelTabs from "./pixel/PixelTabs";
+import CatReveal from "./pixel/CatReveal";
+import { CAT_FRAMES, CAT_PALETTE } from "./pixel/sprites";
+import { C, FONT, pixelBox } from "./pixel/theme";
+import { card, h3, muted, body, th, td } from "./pixel/styles";
 
 // ============================================================
 // LottoMax AI - Frontend
@@ -10,86 +18,52 @@ import DataPanel from "./DataPanel";
 
 const API = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
-// Ball colors by number range
+// Ball colors by number range (solid hex; same ranges as before)
 const getBallColor = (num) => {
-  if (num <= 10) return { bg: "linear-gradient(135deg, #ef4444, #dc2626)", text: "#fff", glow: "rgba(239,68,68,0.5)" };
-  if (num <= 20) return { bg: "linear-gradient(135deg, #3b82f6, #2563eb)", text: "#fff", glow: "rgba(59,130,246,0.5)" };
-  if (num <= 30) return { bg: "linear-gradient(135deg, #a855f7, #9333ea)", text: "#fff", glow: "rgba(168,85,247,0.5)" };
-  if (num <= 40) return { bg: "linear-gradient(135deg, #22c55e, #16a34a)", text: "#fff", glow: "rgba(34,197,94,0.5)" };
-  return { bg: "linear-gradient(135deg, #f97316, #ea580c)", text: "#fff", glow: "rgba(249,115,22,0.5)" };
+  if (num <= 10) return "#ef4444";
+  if (num <= 20) return "#3b82f6";
+  if (num <= 30) return "#a855f7";
+  if (num <= 40) return "#22c55e";
+  return "#f97316";
 };
+
+// Strategy legend colours (ball hues + palette)
+const STRATEGIES = [
+  { key: "lstm", label: "LSTM", color: C.bad },
+  { key: "frequency", label: "Freq", color: "#3b82f6" },
+  { key: "gap", label: "Gap", color: "#a855f7" },
+  { key: "pair", label: "Pair", color: C.good },
+  { key: "distribution", label: "Dist", color: "#f97316" },
+  { key: "seed", label: "Seed", color: C.accent },
+  { key: "smart", label: "Smart", color: C.ink },
+];
+
+const TABS = ["generate", "analysis", "backtest", "signal", "ev", "settings"];
 
 // ============================================================
 // Components
 // ============================================================
-function LottoBall({ number, delay = 0, isRevealed = true, size = "lg" }) {
-  const [revealed, setRevealed] = useState(false);
-  const color = getBallColor(number);
-
-  useEffect(() => {
-    if (isRevealed) {
-      const timer = setTimeout(() => setRevealed(true), delay);
-      return () => clearTimeout(timer);
-    }
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setRevealed(false);
-  }, [isRevealed, delay]);
-
-  const sizes = {
-    lg: { width: "56px", height: "56px", fontSize: "22px" },
-    md: { width: "44px", height: "44px", fontSize: "16px" },
-    sm: { width: "32px", height: "32px", fontSize: "12px" },
-  };
-  const s = sizes[size] || sizes.lg;
-
-  return (
-    <div style={{
-      width: s.width, height: s.height, minWidth: s.width, minHeight: s.height,
-      borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center",
-      fontWeight: 900, fontSize: s.fontSize, flexShrink: 0, position: "relative",
-      background: revealed ? color.bg : "linear-gradient(135deg, #374151, #1f2937)",
-      color: revealed ? color.text : "#6b7280",
-      transform: revealed ? "scale(1)" : "scale(0.6)",
-      opacity: revealed ? 1 : 0.4,
-      boxShadow: revealed ? `0 0 20px ${color.glow}, inset 0 -3px 6px rgba(0,0,0,0.3)` : "none",
-      transition: "all 0.7s ease-out", userSelect: "none",
-    }}>
-      {revealed && <div style={{ position: "absolute", inset: 0, borderRadius: "50%",
-        background: "radial-gradient(circle at 35% 30%, rgba(255,255,255,0.4) 0%, transparent 60%)" }} />}
-      <span style={{ position: "relative", zIndex: 1 }}>{revealed ? number : "?"}</span>
-    </div>
-  );
-}
-
 function StrategyBar({ strategies, number }) {
   if (!strategies || !strategies[String(number)]) return null;
   const s = strategies[String(number)];
-  const items = [
-    { key: "LSTM", val: s.lstm ?? 0, color: "#ef4444" },
-    { key: "Freq", val: s.frequency ?? 0, color: "#3b82f6" },
-    { key: "Gap", val: s.gap ?? 0, color: "#a855f7" },
-    { key: "Pair", val: s.pair ?? 0, color: "#22c55e" },
-    { key: "Dist", val: s.distribution ?? 0, color: "#f97316" },
-    { key: "Seed", val: s.seed ?? 0, color: "#facc15" },
-    { key: "Smart", val: s.smart ?? 0, color: "#14b8a6" },
-  ];
 
   return (
     <div style={{ display: "flex", gap: "2px", alignItems: "flex-end", height: "32px", marginTop: "4px" }}>
-      {items.map((item) => (
-        <div
-          key={item.key}
-          title={`${item.key}: ${(item.val * 100).toFixed(0)}%`}
-          style={{
-            width: "8px",
-            borderRadius: "2px 2px 0 0",
-            transition: "all 0.5s",
-            height: `${Math.max(2, item.val * 32)}px`,
-            backgroundColor: item.color,
-            opacity: 0.8,
-          }}
-        />
-      ))}
+      {STRATEGIES.map((item) => {
+        const val = s[item.key] ?? 0;
+        return (
+          <div
+            key={item.key}
+            title={`${item.label}: ${(val * 100).toFixed(0)}%`}
+            style={{
+              width: "8px",
+              transition: "height 300ms steps(4, end)",
+              height: `${Math.max(2, val * 32)}px`,
+              backgroundColor: item.color,
+            }}
+          />
+        );
+      })}
     </div>
   );
 }
@@ -100,8 +74,8 @@ function FrequencyChart({ data, numRange, title }) {
 
   return (
     <div style={{ marginTop: "24px" }}>
-      <h3 style={{ fontSize: "14px", fontWeight: 600, color: "#e2e8f0", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "12px" }}>{title}</h3>
-      <div style={{ display: "flex", alignItems: "flex-end", gap: "1px", height: "96px", overflowX: "auto", paddingBottom: "4px" }}>
+      <h3 style={h3}>{title}</h3>
+      <div style={{ display: "flex", alignItems: "flex-end", gap: "2px", height: "104px", overflowX: "auto", paddingBottom: "4px" }}>
         {Array.from({ length: numRange }, (_, i) => i + 1).map((n) => {
           const freq = data[String(n)] || 0;
           return (
@@ -109,16 +83,14 @@ function FrequencyChart({ data, numRange, title }) {
               <div
                 style={{
                   width: "100%",
-                  borderRadius: "2px 2px 0 0",
-                  transition: "all 0.3s",
+                  transition: "height 300ms steps(4, end)",
                   height: `${maxFreq > 0 ? (freq / maxFreq) * 80 : 0}px`,
-                  background: getBallColor(n).bg,
-                  opacity: freq > 0 ? 0.7 : 0.15,
+                  background: freq > 0 ? getBallColor(n) : C.panelHi,
                 }}
                 title={`#${n}: ${freq} times`}
               />
               {n % 5 === 0 && (
-                <span style={{ color: "#94a3b8", marginTop: "4px", fontSize: "8px" }}>{n}</span>
+                <span style={{ fontFamily: FONT, color: C.dim, marginTop: "4px", fontSize: "8px" }}>{n}</span>
               )}
             </div>
           );
@@ -127,6 +99,25 @@ function FrequencyChart({ data, numRange, title }) {
     </div>
   );
 }
+
+// Small labelled ball list used by Hot / Cold / Overdue
+function BallList({ entries, suffix = "" }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "row", flexWrap: "wrap", gap: "12px", alignItems: "center" }}>
+      {entries.map(([n, v]) => (
+        <div key={n} style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+          <PixelBall n={parseInt(n)} color={getBallColor(parseInt(n))} scale={3} />
+          <span style={{ fontFamily: FONT, fontSize: "8px", color: C.dim }}>{v}{suffix}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+const sectionTitle = (color) => ({ ...h3, color });
+const btnRow = { display: "flex", alignItems: "center", justifyContent: "center", gap: "24px", margin: "32px 0", flexWrap: "wrap" };
+const noticeBox = { ...pixelBox(C.shadow, C.good, 2, false), padding: "12px 14px", fontFamily: FONT, fontSize: 8, color: C.good, lineHeight: 1.9 };
+const rangeStyle = { width: "100%", height: "8px", cursor: "pointer", accentColor: C.accent };
 
 // ============================================================
 // Main App
@@ -148,6 +139,7 @@ export default function LottoMaxAI() {
   const [seedAnalysis, setSeedAnalysis] = useState(null);
   const [backtest, setBacktest] = useState(null);
   const [isBacktesting, setIsBacktesting] = useState(false);
+  const [revealDone, setRevealDone] = useState(false);
   const [weights, setWeights] = useState({
     lstm: 0.15, frequency: 0.15, gap: 0.20, pair: 0.05, distribution: 0.15, seed: 0.0, smart: 0.30,
   });
@@ -228,6 +220,7 @@ export default function LottoMaxAI() {
   const generate = async () => {
     setIsGenerating(true);
     setPrediction(null);
+    setRevealDone(false);
 
     try {
       const res = await fetch(`${API}/predict`, {
@@ -309,103 +302,49 @@ export default function LottoMaxAI() {
     if (activeTab === "analysis" && connected) loadFrequencies();
   }, [activeTab, connected]);
 
-  return (
-    <div style={{
-      minHeight: "100vh",
-      width: "100%",
-      background: "linear-gradient(160deg, #0a0a0f 0%, #0d1117 30%, #101820 60%, #0a0a0f 100%)",
-      color: "#e2e8f0",
-      fontFamily: "'JetBrains Mono', 'SF Mono', monospace",
-    }}>
-      {/* Background grid */}
-      <div style={{
-        position: "fixed", inset: 0, opacity: 0.05, pointerEvents: "none",
-        backgroundImage: "radial-gradient(circle, #ffffff 1px, transparent 1px)",
-        backgroundSize: "30px 30px",
-      }} />
+  // the newest history row stays hidden until Bomi has revealed it
+  const visibleHistory = prediction && !revealDone ? history.slice(1) : history;
 
-      <div style={{ position: "relative", maxWidth: "960px", margin: "0 auto", padding: "32px 24px" }}>
+  return (
+    <div style={{ minHeight: "100vh", background: C.bg, color: C.ink, fontFamily: FONT }}>
+      <div style={{ position: "relative", maxWidth: "960px", margin: "0 auto", padding: "24px 20px 32px" }}>
         {/* Header */}
-        {/* IMAGE PLACEHOLDER: spot for a logo/hero image — to be generated later and added to fe/src/assets/
-            <img src={heroImage} alt="LottoMax AI" style={{ maxWidth: "180px", margin: "0 auto" }} /> */}
-        <header style={{ textAlign: "center", marginBottom: "8px" }}>
-          <h1 style={{
-            fontSize: "clamp(28px, 5vw, 40px)",
-            fontWeight: 900,
-            letterSpacing: "-0.02em",
-            background: "linear-gradient(135deg, #fff 0%, #94a3b8 50%, #fff 100%)",
-            WebkitBackgroundClip: "text",
-            WebkitTextFillColor: "transparent",
-          }}>
-            LOTTOMAX AI
-          </h1>
-          <p style={{ color: "#94a3b8", fontSize: "12px", letterSpacing: "0.15em", textTransform: "uppercase", marginTop: "4px" }}>
-            LSTM + 7-Strategy Ensemble &bull; EV-Optimized Smart Pick
-          </p>
-        </header>
+        <div style={{ display: "flex", alignItems: "center", gap: 16, padding: "16px 8px" }}>
+          <Sprite rows={CAT_FRAMES.idle} palette={CAT_PALETTE} scale={3} />
+          <div>
+            <div style={{ fontFamily: FONT, fontSize: 20, color: C.accent, textShadow: `3px 3px 0 ${C.shadow}` }}>
+              LOTTO MAX
+            </div>
+            <div style={{ fontFamily: FONT, fontSize: 8, color: C.dim, marginTop: 8 }}>BOMI&apos;S NUMBER PICKER</div>
+          </div>
+        </div>
 
         {/* Status bar */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "20px", margin: "12px 0", fontSize: "12px", flexWrap: "wrap" }}>
-          <span style={{ display: "flex", alignItems: "center", gap: "6px", color: connected ? "#4ade80" : "#f87171" }}>
-            <span style={{
-              display: "inline-block", width: "8px", height: "8px", borderRadius: "50%",
-              backgroundColor: connected ? "#4ade80" : "#f87171",
-              animation: "pulse 2s infinite",
-            }} />
-            {connected ? "Connected" : "Offline"}
+        <div style={{ display: "flex", alignItems: "center", gap: "20px", margin: "8px 8px 12px", fontFamily: FONT, fontSize: "8px", flexWrap: "wrap" }}>
+          <span style={{ display: "flex", alignItems: "center", gap: "8px", color: connected ? C.good : C.bad }}>
+            <span style={{ display: "inline-block", width: "8px", height: "8px", backgroundColor: connected ? C.good : C.bad }} />
+            {connected ? "CONNECTED" : "OFFLINE"}
           </span>
           {serverInfo && (
             <>
-              <span style={{ color: "#94a3b8" }}>{serverInfo.main_draws} draws</span>
-              <span style={{ display: "flex", alignItems: "center", gap: "6px", color: modelReady ? "#60a5fa" : "#94a3b8" }}>
-                <span style={{
-                  display: "inline-block", width: "8px", height: "8px", borderRadius: "50%",
-                  backgroundColor: modelReady ? "#60a5fa" : "#6b7280",
-                  animation: "pulse 2s infinite",
-                }} />
-                {modelReady ? "LSTM Ready" : "LSTM Not Trained"}
+              <span style={{ color: C.dim }}>{serverInfo.main_draws} DRAWS</span>
+              <span style={{ display: "flex", alignItems: "center", gap: "8px", color: modelReady ? C.ink : C.dim }}>
+                <span style={{ display: "inline-block", width: "8px", height: "8px", backgroundColor: modelReady ? C.accent : C.panelHi }} />
+                {modelReady ? "LSTM READY" : "LSTM NOT TRAINED"}
               </span>
             </>
           )}
         </div>
 
         {/* Tabs */}
-        <nav style={{ display: "flex", justifyContent: "center", flexWrap: "wrap", gap: "4px", marginBottom: "32px", borderBottom: "1px solid rgba(255,255,255,0.1)", paddingBottom: "12px" }}>
-          {["generate", "analysis", "backtest", "signal", "ev", "settings"].map((tab) => (
-            <button
-              key={tab}
-              onClick={() => setActiveTab(tab)}
-              style={{
-                padding: "8px 18px",
-                fontSize: "12px",
-                textTransform: "uppercase",
-                letterSpacing: "0.1em",
-                fontWeight: 700,
-                borderRadius: "8px",
-                cursor: "pointer",
-                border: activeTab === tab ? "1px solid rgba(255,255,255,0.2)" : "1px solid transparent",
-                background: activeTab === tab ? "rgba(255,255,255,0.1)" : "transparent",
-                color: activeTab === tab ? "#ffffff" : "#94a3b8",
-              }}
-            >
-              {tab}
-            </button>
-          ))}
-        </nav>
+        <PixelTabs tabs={TABS} active={activeTab} onChange={setActiveTab} />
 
         {/* Not connected warning */}
         {!connected && (
-          <div style={{
-            border: "1px solid rgba(239,68,68,0.3)",
-            background: "rgba(239,68,68,0.1)",
-            borderRadius: "12px",
-            padding: "24px",
-            marginBottom: "32px",
-            textAlign: "center",
-          }}>
-            <p style={{ color: "#f87171", fontWeight: 700, marginBottom: "8px" }}>Server not connected</p>
-            <p style={{ color: "#cbd5e1", fontSize: "14px", marginBottom: "16px" }}>Start the backend server:</p>
-            <code style={{ color: "#e2e8f0", background: "rgba(0,0,0,0.4)", padding: "8px 16px", borderRadius: "6px", fontSize: "14px" }}>
+          <div style={{ ...pixelBox(C.panel, C.bad, 4), padding: "24px", margin: "8px 4px 32px", textAlign: "center" }}>
+            <p style={{ fontFamily: FONT, fontSize: 12, color: C.bad, marginBottom: "16px" }}>SERVER NOT CONNECTED</p>
+            <p style={{ ...body, marginBottom: "16px" }}>Start the backend server:</p>
+            <code style={{ ...pixelBox(C.shadow, C.dim, 2, false), display: "inline-block", fontFamily: FONT, color: C.ink, padding: "8px 16px", fontSize: "8px" }}>
               cd be && python app.py
             </code>
           </div>
@@ -415,70 +354,37 @@ export default function LottoMaxAI() {
         {activeTab === "generate" && connected && (
           <div>
             {/* Honesty notice */}
-            <div style={{
-              padding: "10px 14px", borderRadius: "10px", marginTop: "8px",
-              background: "rgba(20,184,166,0.08)", border: "1px solid rgba(20,184,166,0.25)",
-              fontSize: "12px", color: "#5eead4", lineHeight: 1.6, textAlign: "center",
-            }}>
+            <div style={{ ...noticeBox, marginTop: "8px", textAlign: "center" }}>
               모든 번호 조합의 당첨 확률은 동일합니다. Smart Pick은 당첨 시 공동 당첨자를 줄이는 방식이며 당첨 확률을 높이지 않습니다.
             </div>
 
             {/* LSTM vs constant-probability baseline */}
             {serverInfo && serverInfo.lstm_verdict && serverInfo.lstm_verdict.beats_constant_baseline === false && (
               <div style={{
-                display: "inline-block", marginTop: "12px", padding: "4px 12px", borderRadius: "999px",
-                background: "rgba(239,68,68,0.12)", border: "1px solid rgba(239,68,68,0.4)",
-                color: "#f87171", fontSize: "12px", fontWeight: 700,
+                ...pixelBox(C.shadow, C.bad, 2, false), display: "inline-block", marginTop: "16px", padding: "8px 12px",
+                color: C.bad, fontFamily: FONT, fontSize: "8px", lineHeight: 1.8,
               }} title={`검증 손실 ${serverInfo.lstm_verdict.val_loss} vs 상수 기준선 ${serverInfo.lstm_verdict.baseline_loss}`}>
-                ⚠️ LSTM: 상수 확률 대비 개선 없음
+                LSTM: 상수 확률 대비 개선 없음
               </div>
             )}
 
             {/* Control Buttons */}
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "24px", margin: "32px 0" }}>
-              <button
+            <div style={btnRow}>
+              <PixelButton
                 onClick={startTraining}
                 disabled={isTraining}
-                style={{
-                  padding: "12px 24px",
-                  borderRadius: "12px",
-                  fontSize: "14px",
-                  fontWeight: 700,
-                  textTransform: "uppercase",
-                  letterSpacing: "0.05em",
-                  cursor: isTraining ? "wait" : "pointer",
-                  border: "1px solid",
-                  borderColor: isTraining ? "#eab308" : modelReady ? "#22c55e" : "#64748b",
-                  background: isTraining ? "rgba(234,179,8,0.15)" : modelReady ? "rgba(34,197,94,0.1)" : "rgba(255,255,255,0.05)",
-                  color: isTraining ? "#facc15" : modelReady ? "#4ade80" : "#e2e8f0",
-                }}
+                tone={modelReady && !isTraining ? "good" : "plain"}
               >
-                {isTraining ? "\u23F3 Training LSTM..." : modelReady ? "\u2705 Retrain Model" : "\uD83E\uDDE0 Train LSTM Model"}
-              </button>
+                {isTraining ? "TRAINING LSTM..." : modelReady ? "RETRAIN MODEL" : "TRAIN LSTM MODEL"}
+              </PixelButton>
 
-              <button
-                onClick={generate}
-                disabled={isGenerating}
-                style={{
-                  padding: "12px 32px",
-                  borderRadius: "12px",
-                  fontSize: "14px",
-                  fontWeight: 700,
-                  textTransform: "uppercase",
-                  letterSpacing: "0.05em",
-                  cursor: isGenerating ? "wait" : "pointer",
-                  border: "1px solid rgba(239,68,68,0.3)",
-                  background: isGenerating ? "rgba(59,130,246,0.15)" : "linear-gradient(135deg, rgba(239,68,68,0.8), rgba(249,115,22,0.8))",
-                  color: "#ffffff",
-                  boxShadow: isGenerating ? "none" : "0 4px 15px rgba(239,68,68,0.2)",
-                }}
-              >
-                {isGenerating ? "\u23F3 Analyzing..." : "\uD83C\uDFB0 Generate Numbers"}
-              </button>
+              <PixelButton onClick={generate} disabled={isGenerating} tone="accent">
+                {isGenerating ? "ANALYZING..." : "GENERATE NUMBERS"}
+              </PixelButton>
             </div>
 
             {!modelReady && !isTraining && (
-              <p style={{ textAlign: "center", color: "#94a3b8", fontSize: "12px", marginBottom: "24px" }}>
+              <p style={{ ...muted, textAlign: "center", marginBottom: "24px" }}>
                 Train the LSTM model first for deep learning predictions, or generate with statistical strategies only.
               </p>
             )}
@@ -488,18 +394,17 @@ export default function LottoMaxAI() {
               <div style={{ marginBottom: "24px" }}>
                 {/* Progress bar */}
                 {trainingProgress.status === "training" && (
-                  <div style={{ padding: "12px 16px", borderBottom: "1px solid rgba(255,255,255,0.1)" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: "12px", color: "#cbd5e1", marginBottom: "8px" }}>
+                  <div style={{ padding: "12px 16px" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: "8px", fontFamily: FONT, fontSize: "8px", color: C.ink, marginBottom: "12px" }}>
                       <span>{trainingProgress.strategy}</span>
-                      <span>Epoch {trainingProgress.epoch}/{trainingProgress.total_epochs} &bull; Loss: {trainingProgress.loss}</span>
+                      <span>EPOCH {trainingProgress.epoch}/{trainingProgress.total_epochs} &bull; LOSS: {trainingProgress.loss}</span>
                     </div>
-                    <div style={{ width: "100%", height: "6px", background: "rgba(255,255,255,0.05)", borderRadius: "3px", overflow: "hidden" }}>
+                    <div style={{ ...pixelBox(C.shadow, C.dim, 2, false), width: "calc(100% - 4px)", height: "12px", overflow: "hidden" }}>
                       <div style={{
                         height: "100%",
-                        borderRadius: "3px",
-                        transition: "all 0.3s",
+                        transition: "width 300ms steps(6, end)",
                         width: `${(trainingProgress.epoch / trainingProgress.total_epochs) * 100}%`,
-                        background: "linear-gradient(90deg, #3b82f6, #a855f7)",
+                        background: C.accent,
                       }} />
                     </div>
                   </div>
@@ -508,151 +413,131 @@ export default function LottoMaxAI() {
                 <div
                   ref={logRef}
                   style={{
-                    background: "rgba(0,0,0,0.4)",
-                    border: "1px solid rgba(255,255,255,0.1)",
-                    borderRadius: "12px",
+                    ...pixelBox(C.shadow, C.dim, 2, false),
                     padding: "12px",
                     maxHeight: "200px",
                     overflowY: "auto",
                     marginBottom: "24px",
-                    fontFamily: "monospace",
-                    fontSize: "12px",
+                    fontFamily: FONT,
+                    fontSize: "8px",
                   }}
                 >
                   {trainingLog.map((entry, i) => (
-                    <div key={i} style={{ color: "#94a3b8", padding: "2px 0" }}>
-                      <span style={{ color: "#475569", marginRight: "8px" }}>{entry.time}</span>
-                      <span style={{ color: "#cbd5e1" }}>{entry.msg}</span>
+                    <div key={i} style={{ color: C.dim, padding: "4px 0", lineHeight: 1.6 }}>
+                      <span style={{ color: C.panelHi, marginRight: "8px" }}>{entry.time}</span>
+                      <span style={{ color: C.ink }}>{entry.msg}</span>
                     </div>
                   ))}
-                  {trainingLog.length === 0 && <span style={{ color: "#94a3b8" }}>Waiting for training...</span>}
+                  {trainingLog.length === 0 && <span style={{ color: C.dim }}>WAITING FOR TRAINING...</span>}
                 </div>
               </div>
             )}
 
             {/* Prediction Display */}
-            {prediction && (
+            {prediction && prediction.main && (
               <div style={{ marginBottom: "32px" }}>
-                {/* Main Numbers */}
-                <div style={{
-                  background: "rgba(255,255,255,0.03)",
-                  border: "1px solid rgba(255,255,255,0.1)",
-                  borderRadius: "16px",
-                  padding: "24px",
-                  marginBottom: "16px",
-                }}>
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "20px" }}>
-                    <h2 style={{ fontSize: "14px", fontWeight: 700, color: "#f1f5f9", textTransform: "uppercase", letterSpacing: "0.05em" }}>LottoMax Numbers</h2>
-                    <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                      {prediction.model_trained && (
-                        <span style={{ fontSize: "12px", background: "rgba(59,130,246,0.2)", color: "#60a5fa", padding: "2px 8px", borderRadius: "4px" }}>LSTM</span>
-                      )}
-                      <div style={{
-                        height: "8px",
-                        borderRadius: "4px",
-                        width: `${prediction.main.confidence}px`,
-                        background: `linear-gradient(90deg, #22c55e, ${prediction.main.confidence > 50 ? "#22c55e" : "#ef4444"})`,
-                      }} />
-                      <span style={{ fontSize: "12px", color: "#cbd5e1" }}>{prediction.main.confidence}%</span>
-                    </div>
-                  </div>
-
-                  {/* Main ball row - horizontal, no wrapping */}
-                  <div style={{ display: "flex", flexDirection: "row", alignItems: "center", justifyContent: "center", gap: "12px", flexWrap: "nowrap" }}>
-                    {prediction.main.numbers.map((num, i) => (
-                      <div key={num} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "4px" }}>
-                        <LottoBall number={num} delay={i * 200} isRevealed={true} />
-                        {showStrategies && <StrategyBar strategies={prediction.main.strategies} number={num} />}
+                <div style={{ ...card, marginBottom: "24px" }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "12px", marginBottom: "8px" }}>
+                    <h2 style={{ ...h3, margin: 0 }}>LOTTOMAX NUMBERS</h2>
+                    {revealDone && (
+                      <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                        {prediction.model_trained && (
+                          <span style={{ fontFamily: FONT, fontSize: "8px", background: C.panelHi, color: C.ink, padding: "4px 8px" }}>LSTM</span>
+                        )}
+                        <div style={{
+                          height: "8px",
+                          width: `${prediction.main.confidence}px`,
+                          background: prediction.main.confidence > 50 ? C.good : C.bad,
+                        }} />
+                        <span style={{ fontFamily: FONT, fontSize: "8px", color: C.ink }}>{prediction.main.confidence}%</span>
                       </div>
-                    ))}
+                    )}
                   </div>
 
-                  {/* EV info: why this combo shares less prize money */}
-                  {prediction.main.ev_info && (
-                    <div style={{
-                      marginTop: "16px", padding: "10px 14px", borderRadius: "10px",
-                      background: "rgba(20,184,166,0.08)", border: "1px solid rgba(20,184,166,0.25)",
-                      display: "flex", justifyContent: "center", gap: "18px", flexWrap: "wrap",
-                      fontSize: "12px", color: "#5eead4",
-                    }}>
-                      <span>💰 Smart Pick {prediction.main.ev_info.guard_applied ? "ON" : "OFF"}</span>
-                      <span>1–31 numbers: {prediction.main.ev_info.low_count}/{prediction.main.ev_info.max_low}</span>
-                      <span>Sum: {prediction.main.ev_info.sum}</span>
-                      <span>Share risk: {prediction.main.ev_info.share_risk === "low" ? "LOW ✅" : "HIGH ⚠️"}</span>
-                    </div>
-                  )}
+                  <CatReveal
+                    numbers={prediction.main.numbers}
+                    runKey={prediction.timestamp}
+                    colorFor={getBallColor}
+                    onDone={() => setRevealDone(true)}
+                  />
 
-                  <button
-                    onClick={() => setShowStrategies(!showStrategies)}
-                    style={{
-                      marginTop: "16px",
-                      fontSize: "12px",
-                      color: "#94a3b8",
-                      background: "none",
-                      border: "none",
-                      cursor: "pointer",
-                      width: "100%",
-                      textAlign: "center",
-                    }}
-                  >
-                    {showStrategies ? "Hide Strategy Breakdown" : "Show Strategy Breakdown"}
-                  </button>
+                  {revealDone && (
+                    <>
+                      {showStrategies && (
+                        <div style={{ display: "flex", flexDirection: "row", alignItems: "flex-start", justifyContent: "center", gap: "12px", flexWrap: "wrap", marginTop: "8px" }}>
+                          {prediction.main.numbers.map((num) => (
+                            <div key={num} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "4px" }}>
+                              <PixelBall n={num} color={getBallColor(num)} scale={3} />
+                              <StrategyBar strategies={prediction.main.strategies} number={num} />
+                            </div>
+                          ))}
+                        </div>
+                      )}
 
-                  {showStrategies && (
-                    <div style={{ marginTop: "12px", display: "flex", justifyContent: "center", gap: "16px", fontSize: "12px", color: "#cbd5e1", flexWrap: "wrap" }}>
-                      {[
-                        { label: "LSTM", color: "#ef4444" },
-                        { label: "Freq", color: "#3b82f6" },
-                        { label: "Gap", color: "#a855f7" },
-                        { label: "Pair", color: "#22c55e" },
-                        { label: "Dist", color: "#f97316" },
-                        { label: "Seed", color: "#facc15" },
-                        { label: "Smart", color: "#14b8a6" },
-                      ].map((s) => (
-                        <span key={s.label} style={{ display: "flex", alignItems: "center", gap: "4px" }}>
-                          <div style={{ width: "8px", height: "8px", borderRadius: "2px", backgroundColor: s.color }} />
-                          {s.label}
-                        </span>
-                      ))}
-                    </div>
+                      {/* EV info: why this combo shares less prize money */}
+                      {prediction.main.ev_info && (
+                        <div style={{
+                          ...noticeBox, marginTop: "16px",
+                          display: "flex", justifyContent: "center", gap: "18px", flexWrap: "wrap",
+                        }}>
+                          <span>SMART PICK {prediction.main.ev_info.guard_applied ? "ON" : "OFF"}</span>
+                          <span>1–31 numbers: {prediction.main.ev_info.low_count}/{prediction.main.ev_info.max_low}</span>
+                          <span>Sum: {prediction.main.ev_info.sum}</span>
+                          <span>Share risk: {prediction.main.ev_info.share_risk === "low" ? "LOW" : "HIGH"}</span>
+                        </div>
+                      )}
+
+                      <div style={{ marginTop: "16px", textAlign: "center" }}>
+                        <PixelButton tone="plain" onClick={() => setShowStrategies(!showStrategies)}>
+                          {showStrategies ? "HIDE STRATEGY BREAKDOWN" : "SHOW STRATEGY BREAKDOWN"}
+                        </PixelButton>
+                      </div>
+
+                      {showStrategies && (
+                        <div style={{ marginTop: "16px", display: "flex", justifyContent: "center", gap: "16px", fontFamily: FONT, fontSize: "8px", color: C.ink, flexWrap: "wrap" }}>
+                          {STRATEGIES.map((s) => (
+                            <span key={s.label} style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+                              <div style={{ width: "8px", height: "8px", backgroundColor: s.color }} />
+                              {s.label.toUpperCase()}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </>
                   )}
                 </div>
               </div>
             )}
 
             {/* History */}
-            {history.length > 0 && (
-              <div style={{
-                background: "rgba(255,255,255,0.02)",
-                border: "1px solid rgba(255,255,255,0.1)",
-                borderRadius: "16px",
-                padding: "16px 20px",
-                marginBottom: "32px",
-              }}>
-                <h3 style={{ fontSize: "14px", fontWeight: 700, color: "#f1f5f9", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "12px" }}>Generation History</h3>
+            {visibleHistory.length > 0 && (
+              <div style={{ ...card, marginBottom: "32px" }}>
+                <h3 style={h3}>GENERATION HISTORY</h3>
                 <div>
-                  {history.map((h, idx) => (
-                    <div key={h.id} style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: "8px",
-                      padding: "8px 12px",
-                      borderRadius: "8px",
-                      background: idx === 0 ? "rgba(255,255,255,0.05)" : "transparent",
-                      opacity: idx === 0 ? 1 : 0.6,
-                    }}>
-                      <span style={{ fontSize: "12px", color: "#94a3b8", width: "70px", flexShrink: 0 }}>{h.time}</span>
-                      <div style={{ display: "flex", flexDirection: "row", gap: "4px", flexWrap: "nowrap" }}>
-                        {h.main.map((n) => (
-                          <LottoBall key={n} number={n} size="sm" isRevealed={true} delay={0} />
-                        ))}
+                  {visibleHistory.map((h, idx) => {
+                    return (
+                      <div key={h.id} style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "8px",
+                        flexWrap: "wrap",
+                        padding: "8px 12px",
+                        background: idx === 0 ? C.panelHi : "transparent",
+                        opacity: idx === 0 ? 1 : 0.7,
+                      }}>
+                        <span style={{ fontFamily: FONT, fontSize: "8px", color: C.dim, width: "90px", flexShrink: 0 }}>{h.time}</span>
+                        <div style={{ display: "flex", flexDirection: "row", gap: "4px", flexWrap: "nowrap" }}>
+                          {h.main.map((n) => (
+                            <PixelBall key={n} n={n} color={getBallColor(n)} scale={3} />
+                          ))}
+                        </div>
+                        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "8px", flexShrink: 0 }}>
+                          {h.modelTrained && <span style={{ fontFamily: FONT, fontSize: "8px", color: C.accent }}>LSTM</span>}
+                          <span style={{ fontFamily: FONT, fontSize: "8px", color: C.dim }}>{h.confidence}%</span>
+                        </div>
                       </div>
-                      <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "8px", flexShrink: 0 }}>
-                        {h.modelTrained && <span style={{ fontSize: "12px", color: "#60a5fa" }}>LSTM</span>}
-                        <span style={{ fontSize: "12px", color: "#94a3b8" }}>{h.confidence}%</span>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -668,79 +553,47 @@ export default function LottoMaxAI() {
                   title={`LottoMax Frequency (Last ${frequencies.recent_window} Draws)`} />
 
                 {/* Hot & Cold */}
-                <div style={{ marginTop: "32px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
-                  <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "12px", padding: "16px" }}>
-                    <h3 style={{ fontSize: "14px", fontWeight: 700, color: "#f87171", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "12px" }}>Hot Numbers</h3>
-                    <div style={{ display: "flex", flexDirection: "row", flexWrap: "wrap", gap: "8px", alignItems: "center" }}>
-                      {Object.entries(frequencies.main_recent)
-                        .sort((a, b) => b[1] - a[1])
-                        .slice(0, 10)
-                        .map(([n, freq]) => (
-                          <div key={n} style={{ display: "flex", alignItems: "center", gap: "4px" }}>
-                            <LottoBall number={parseInt(n)} size="sm" isRevealed={true} delay={0} />
-                            <span style={{ fontSize: "11px", color: "#94a3b8" }}>{freq}</span>
-                          </div>
-                        ))}
-                    </div>
+                <div style={{ marginTop: "32px", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: "16px" }}>
+                  <div style={{ ...card, marginBottom: "4px" }}>
+                    <h3 style={sectionTitle(C.bad)}>HOT NUMBERS</h3>
+                    <BallList entries={Object.entries(frequencies.main_recent).sort((a, b) => b[1] - a[1]).slice(0, 10)} />
                   </div>
-                  <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "12px", padding: "16px" }}>
-                    <h3 style={{ fontSize: "14px", fontWeight: 700, color: "#60a5fa", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "12px" }}>Cold Numbers</h3>
-                    <div style={{ display: "flex", flexDirection: "row", flexWrap: "wrap", gap: "8px", alignItems: "center" }}>
-                      {Object.entries(frequencies.main_recent)
-                        .sort((a, b) => a[1] - b[1])
-                        .slice(0, 10)
-                        .map(([n, freq]) => (
-                          <div key={n} style={{ display: "flex", alignItems: "center", gap: "4px" }}>
-                            <LottoBall number={parseInt(n)} size="sm" isRevealed={true} delay={0} />
-                            <span style={{ fontSize: "11px", color: "#94a3b8" }}>{freq}</span>
-                          </div>
-                        ))}
-                    </div>
+                  <div style={{ ...card, marginBottom: "4px" }}>
+                    <h3 style={sectionTitle("#3b82f6")}>COLD NUMBERS</h3>
+                    <BallList entries={Object.entries(frequencies.main_recent).sort((a, b) => a[1] - b[1]).slice(0, 10)} />
                   </div>
                 </div>
 
                 {/* Overdue */}
-                <div style={{ marginTop: "16px", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "12px", padding: "16px" }}>
-                  <h3 style={{ fontSize: "14px", fontWeight: 700, color: "#c084fc", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "12px" }}>Most Overdue</h3>
-                  <div style={{ display: "flex", flexDirection: "row", flexWrap: "wrap", gap: "8px", alignItems: "center" }}>
-                    {Object.entries(frequencies.main_gaps)
-                      .sort((a, b) => b[1] - a[1])
-                      .slice(0, 10)
-                      .map(([n, gap]) => (
-                        <div key={n} style={{ display: "flex", alignItems: "center", gap: "4px" }}>
-                          <LottoBall number={parseInt(n)} size="sm" isRevealed={true} delay={0} />
-                          <span style={{ fontSize: "11px", color: "#94a3b8" }}>{gap} draws</span>
-                        </div>
-                      ))}
-                  </div>
+                <div style={{ ...card, marginTop: "16px" }}>
+                  <h3 style={sectionTitle("#a855f7")}>MOST OVERDUE</h3>
+                  <BallList suffix=" draws" entries={Object.entries(frequencies.main_gaps).sort((a, b) => b[1] - a[1]).slice(0, 10)} />
                 </div>
               </>
             ) : (
-              <p style={{ textAlign: "center", color: "#94a3b8" }}>Loading analysis...</p>
+              <p style={{ ...muted, textAlign: "center" }}>LOADING ANALYSIS...</p>
             )}
 
             {/* Seed Analysis Section */}
-            <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "16px", padding: "20px", marginTop: "24px" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
-                <h3 style={{ fontSize: "14px", fontWeight: 700, color: "#facc15", textTransform: "uppercase", letterSpacing: "0.05em" }}>🔑 Seed/RNG Analysis</h3>
-                <button onClick={runSeedAnalysis} style={{ padding: "6px 16px", borderRadius: "8px", fontSize: "12px", background: "rgba(250,204,21,0.1)", border: "1px solid rgba(250,204,21,0.3)", color: "#facc15", cursor: "pointer" }}>
-                  Run Analysis
-                </button>
+            <div style={{ ...card, marginTop: "24px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "12px", marginBottom: "16px" }}>
+                <h3 style={{ ...sectionTitle(C.accent), margin: 0 }}>SEED/RNG ANALYSIS</h3>
+                <PixelButton onClick={runSeedAnalysis}>RUN ANALYSIS</PixelButton>
               </div>
               {seedAnalysis && (
                 <div>
-                  <p style={{ color: "#cbd5e1", fontSize: "13px" }}>
+                  <p style={body}>
                     Tested {seedAnalysis.tested_seeds} seeds &bull; {seedAnalysis.perfect_matches} perfect &bull; {seedAnalysis.partial_matches} partial (4+)
                   </p>
                   {/* Algo scores */}
-                  <div style={{ display: "flex", gap: "16px", marginTop: "12px" }}>
+                  <div style={{ display: "flex", gap: "16px", marginTop: "12px", flexWrap: "wrap" }}>
                     {Object.entries(seedAnalysis.algo_scores).map(([algo, score]) => (
-                      <div key={algo} style={{ flex: 1 }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", fontSize: "11px", color: "#94a3b8", marginBottom: "4px" }}>
+                      <div key={algo} style={{ flex: 1, minWidth: "120px" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", fontFamily: FONT, fontSize: "8px", color: C.dim, marginBottom: "8px" }}>
                           <span>{algo.toUpperCase()}</span><span>{score}</span>
                         </div>
-                        <div style={{ height: "6px", background: "rgba(255,255,255,0.05)", borderRadius: "3px" }}>
-                          <div style={{ height: "100%", borderRadius: "3px", background: "#facc15", width: `${Math.min(100, score)}%` }} />
+                        <div style={{ height: "10px", background: C.shadow }}>
+                          <div style={{ height: "100%", background: C.accent, width: `${Math.min(100, score)}%`, transition: "width 300ms steps(6, end)" }} />
                         </div>
                       </div>
                     ))}
@@ -748,14 +601,14 @@ export default function LottoMaxAI() {
                   {/* Top partial matches */}
                   {seedAnalysis.top_partial && seedAnalysis.top_partial.length > 0 && (
                     <div style={{ marginTop: "16px" }}>
-                      <h4 style={{ fontSize: "12px", fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "8px" }}>Top Partial Matches</h4>
+                      <h4 style={{ ...muted, textTransform: "uppercase", marginBottom: "8px" }}>TOP PARTIAL MATCHES</h4>
                       <div style={{ maxHeight: "160px", overflowY: "auto" }}>
                         {seedAnalysis.top_partial.map((m, i) => (
-                          <div key={i} style={{ display: "flex", alignItems: "center", gap: "8px", padding: "4px 0", fontSize: "12px", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
-                            <span style={{ color: "#facc15", fontWeight: 700, width: "24px" }}>{m.match}/{7}</span>
-                            <span style={{ color: "#94a3b8", width: "40px" }}>{m.algo.toUpperCase()}</span>
-                            <span style={{ color: "#cbd5e1" }}>[{m.predicted.join(", ")}]</span>
-                            <span style={{ color: "#94a3b8", marginLeft: "auto" }}>{m.date}</span>
+                          <div key={i} style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: "8px", padding: "4px 0", fontFamily: FONT, fontSize: "8px", borderBottom: `2px solid ${C.panelHi}` }}>
+                            <span style={{ color: C.accent, width: "32px" }}>{m.match}/{7}</span>
+                            <span style={{ color: C.dim, width: "40px" }}>{m.algo.toUpperCase()}</span>
+                            <span style={{ color: C.ink }}>[{m.predicted.join(", ")}]</span>
+                            <span style={{ color: C.dim, marginLeft: "auto" }}>{m.date}</span>
                           </div>
                         ))}
                       </div>
@@ -764,7 +617,7 @@ export default function LottoMaxAI() {
                 </div>
               )}
               {!seedAnalysis && (
-                <p style={{ color: "#94a3b8", fontSize: "12px" }}>Click &quot;Run Analysis&quot; to test PRNG seeds against historical draws.</p>
+                <p style={muted}>Click &quot;RUN ANALYSIS&quot; to test PRNG seeds against historical draws.</p>
               )}
             </div>
           </div>
@@ -773,41 +626,31 @@ export default function LottoMaxAI() {
         {/* ===================== BACKTEST TAB ===================== */}
         {activeTab === "backtest" && connected && (
           <div>
-            <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "16px", padding: "24px" }}>
+            <div style={card}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "12px" }}>
-                <div>
-                  <h3 style={{ fontSize: "14px", fontWeight: 700, color: "#f1f5f9", textTransform: "uppercase", letterSpacing: "0.05em" }}>🔬 Walk-Forward Backtest</h3>
-                  <p style={{ fontSize: "12px", color: "#94a3b8", marginTop: "4px" }}>
+                <div style={{ flex: "1 1 320px" }}>
+                  <h3 style={{ ...h3, marginBottom: "8px" }}>WALK-FORWARD BACKTEST</h3>
+                  <p style={muted}>
                     최근 150회차에 대해 각 전략의 top-7이 실제 당첨번호와 몇 개나 일치했는지 검증합니다.
                     우연 기대값은 7×7/50 = 0.98개입니다.
                   </p>
                 </div>
-                <button
-                  onClick={runBacktest}
-                  disabled={isBacktesting}
-                  style={{
-                    padding: "10px 24px", borderRadius: "10px", fontSize: "13px", fontWeight: 700,
-                    cursor: isBacktesting ? "wait" : "pointer",
-                    border: "1px solid rgba(20,184,166,0.4)",
-                    background: isBacktesting ? "rgba(20,184,166,0.1)" : "rgba(20,184,166,0.2)",
-                    color: "#5eead4",
-                  }}
-                >
-                  {isBacktesting ? "⏳ Running..." : "▶ Run Backtest"}
-                </button>
+                <PixelButton onClick={runBacktest} disabled={isBacktesting} tone="good">
+                  {isBacktesting ? "RUNNING..." : "> RUN BACKTEST"}
+                </PixelButton>
               </div>
 
               {backtest && (
                 <div style={{ marginTop: "20px" }}>
                   <div style={{ overflowX: "auto" }}>
-                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse" }}>
                       <thead>
-                        <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.15)", color: "#94a3b8", textAlign: "left" }}>
-                          <th style={{ padding: "8px" }}>Strategy</th>
-                          <th style={{ padding: "8px" }}>Avg matches</th>
-                          <th style={{ padding: "8px" }}>vs random ({backtest.expected_random})</th>
-                          <th style={{ padding: "8px" }}>p-value</th>
-                          <th style={{ padding: "8px" }}>0 / 1 / 2 / 3+</th>
+                        <tr>
+                          <th style={th}>Strategy</th>
+                          <th style={th}>Avg matches</th>
+                          <th style={th}>vs random ({backtest.expected_random})</th>
+                          <th style={th}>p-value</th>
+                          <th style={th}>0 / 1 / 2 / 3+</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -815,14 +658,14 @@ export default function LottoMaxAI() {
                           const diff = r.mean - (r.expected ?? backtest.expected_random);
                           const sig = r.p < 0.05;
                           return (
-                            <tr key={name} style={{ borderBottom: "1px solid rgba(255,255,255,0.05)", color: "#e2e8f0" }}>
-                              <td style={{ padding: "8px", fontWeight: 700 }}>{name}</td>
-                              <td style={{ padding: "8px" }}>{r.mean.toFixed(3)}</td>
-                              <td style={{ padding: "8px", color: sig ? (diff > 0 ? "#4ade80" : "#f87171") : "#94a3b8" }}>
+                            <tr key={name}>
+                              <td style={td}>{name}</td>
+                              <td style={td}>{r.mean.toFixed(3)}</td>
+                              <td style={{ ...td, color: sig ? (diff > 0 ? C.good : C.bad) : C.dim }}>
                                 {diff >= 0 ? "+" : ""}{diff.toFixed(3)}{sig ? " *" : ""}
                               </td>
-                              <td style={{ padding: "8px", color: "#94a3b8" }}>{r.p.toFixed(3)}</td>
-                              <td style={{ padding: "8px", color: "#94a3b8" }}>
+                              <td style={{ ...td, color: C.dim }}>{r.p.toFixed(3)}</td>
+                              <td style={{ ...td, color: C.dim }}>
                                 {r.dist["0"]} / {r.dist["1"]} / {r.dist["2"]} / {r.dist["3+"]}
                               </td>
                             </tr>
@@ -831,17 +674,13 @@ export default function LottoMaxAI() {
                       </tbody>
                     </table>
                   </div>
-                  <div style={{
-                    marginTop: "16px", padding: "12px 16px", borderRadius: "10px",
-                    background: "rgba(20,184,166,0.08)", border: "1px solid rgba(20,184,166,0.25)",
-                    fontSize: "13px", color: "#5eead4", lineHeight: 1.6,
-                  }}>
+                  <div style={{ ...noticeBox, marginTop: "16px" }}>
                     {backtest.verdict}
                   </div>
                 </div>
               )}
               {!backtest && !isBacktesting && (
-                <p style={{ color: "#94a3b8", fontSize: "12px", marginTop: "16px" }}>
+                <p style={{ ...muted, marginTop: "16px" }}>
                   &quot;Run Backtest&quot;를 눌러 전략별 실제 성능을 확인하세요. (약 5초 소요)
                 </p>
               )}
@@ -857,114 +696,107 @@ export default function LottoMaxAI() {
 
         {/* ===================== SETTINGS TAB ===================== */}
         {activeTab === "settings" && (
-          <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
+          <div style={{ display: "flex", flexDirection: "column" }}>
             {connected && <DataPanel API={API} />}
 
             {/* Training Settings */}
-            <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "16px", padding: "24px" }}>
-              <h3 style={{ fontSize: "14px", fontWeight: 700, color: "#f1f5f9", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "16px" }}>Training Settings</h3>
+            <div style={card}>
+              <h3 style={h3}>TRAINING SETTINGS</h3>
               <div style={{ marginBottom: "16px" }}>
-                <label style={{ fontSize: "14px", color: "#e2e8f0", display: "block", marginBottom: "8px" }}>LSTM Training Epochs</label>
+                <label style={{ ...body, display: "block", marginBottom: "12px" }}>LSTM TRAINING EPOCHS</label>
                 <input
                   type="range" min="20" max="300" value={epochs}
                   onChange={(e) => setEpochs(parseInt(e.target.value))}
-                  style={{ width: "100%", height: "4px", borderRadius: "4px", appearance: "none", cursor: "pointer", accentColor: "#3b82f6" }}
+                  style={rangeStyle}
                 />
-                <div style={{ display: "flex", justifyContent: "space-between", fontSize: "12px", color: "#94a3b8", marginTop: "4px" }}>
-                  <span>Fast (20)</span>
-                  <span style={{ color: "#ffffff", fontWeight: 700 }}>{epochs}</span>
-                  <span>Deep (300)</span>
+                <div style={{ display: "flex", justifyContent: "space-between", fontFamily: FONT, fontSize: "8px", color: C.dim, marginTop: "8px" }}>
+                  <span>FAST (20)</span>
+                  <span style={{ color: C.accent }}>{epochs}</span>
+                  <span>DEEP (300)</span>
                 </div>
               </div>
-              <p style={{ fontSize: "12px", color: "#94a3b8" }}>
+              <p style={muted}>
                 More epochs = deeper pattern learning but longer training time.
                 Early stopping prevents overfitting.
               </p>
             </div>
 
             {/* Strategy Weights */}
-            <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "16px", padding: "24px" }}>
-              <h3 style={{ fontSize: "14px", fontWeight: 700, color: "#f1f5f9", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "16px" }}>Strategy Weights</h3>
-              <p style={{ fontSize: "12px", color: "#94a3b8", marginBottom: "16px" }}>
+            <div style={card}>
+              <h3 style={h3}>STRATEGY WEIGHTS</h3>
+              <p style={{ ...muted, marginBottom: "16px" }}>
                 Adjust each strategy&apos;s influence. Defaults follow the backtest (docs/RESEARCH.md):
                 Smart Pick highest, pair lowered, seed off.
               </p>
               {[
-                { key: "smart", label: "Smart Pick (EV)", color: "#14b8a6", desc: "인기 조합 회피 — 당첨 확률은 동일, 당첨 시 분배금 기대값 ↑" },
+                { key: "smart", label: "Smart Pick (EV)", color: C.ink, desc: "인기 조합 회피 — 당첨 확률은 동일, 당첨 시 분배금 기대값 ↑" },
                 { key: "gap", label: "Gap Analysis", color: "#a855f7", desc: "Overdue numbers based on gap distributions" },
-                { key: "lstm", label: "LSTM Deep Learning", color: "#ef4444", desc: "Neural network sequential pattern detection" },
+                { key: "lstm", label: "LSTM Deep Learning", color: C.bad, desc: "Neural network sequential pattern detection" },
                 { key: "frequency", label: "Frequency + Recency", color: "#3b82f6", desc: "Hot/cold numbers with time decay" },
                 { key: "distribution", label: "Distribution Balance", color: "#f97316", desc: "Range & odd/even equilibrium" },
-                { key: "pair", label: "Pair Correlation", color: "#22c55e", desc: "백테스트에서 랜덤보다 유의하게 나빴음 — 기본 가중치 최소화" },
-                { key: "seed", label: "Seed/RNG Analysis", color: "#facc15", desc: "예측력 없음 검증됨 (기본 0) — 투명성을 위해 유지" },
+                { key: "pair", label: "Pair Correlation", color: C.good, desc: "백테스트에서 랜덤보다 유의하게 나빴음 — 기본 가중치 최소화" },
+                { key: "seed", label: "Seed/RNG Analysis", color: C.accent, desc: "예측력 없음 검증됨 (기본 0) — 투명성을 위해 유지" },
               ].map((s) => (
-                <div key={s.key} style={{ marginBottom: "16px" }}>
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "4px" }}>
+                <div key={s.key} style={{ marginBottom: "20px" }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "8px" }}>
                     <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                      <div style={{ width: "8px", height: "8px", borderRadius: "50%", backgroundColor: s.color }} />
-                      <span style={{ fontSize: "14px", color: "#e2e8f0" }}>{s.label}</span>
+                      <div style={{ width: "8px", height: "8px", backgroundColor: s.color }} />
+                      <span style={{ fontFamily: FONT, fontSize: "10px", color: C.ink }}>{s.label}</span>
                     </div>
-                    <span style={{ fontSize: "14px", color: "#cbd5e1", fontFamily: "monospace" }}>{weights[s.key].toFixed(2)}</span>
+                    <span style={{ fontFamily: FONT, fontSize: "10px", color: C.ink }}>{weights[s.key].toFixed(2)}</span>
                   </div>
                   <input
                     type="range" min="0" max="100" value={weights[s.key] * 100}
                     onChange={(e) => setWeights((prev) => ({ ...prev, [s.key]: parseInt(e.target.value) / 100 }))}
-                    style={{ width: "100%", height: "4px", borderRadius: "4px", appearance: "none", cursor: "pointer", accentColor: s.color }}
+                    style={{ ...rangeStyle, accentColor: s.color }}
                   />
-                  <p style={{ fontSize: "12px", color: "#94a3b8", marginTop: "2px" }}>{s.desc}</p>
+                  <p style={{ ...muted, marginTop: "4px" }}>{s.desc}</p>
                 </div>
               ))}
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: "12px", borderTop: "1px solid rgba(255,255,255,0.1)" }}>
-                <span style={{ fontSize: "12px", color: "#94a3b8" }}>
-                  Total: {Object.values(weights).reduce((a, b) => a + b, 0).toFixed(2)}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "12px", paddingTop: "12px", borderTop: `4px solid ${C.panelHi}` }}>
+                <span style={{ fontFamily: FONT, fontSize: "8px", color: C.dim }}>
+                  TOTAL: {Object.values(weights).reduce((a, b) => a + b, 0).toFixed(2)}
                 </span>
-                <button
+                <PixelButton
+                  tone="plain"
                   onClick={() => setWeights({ lstm: 0.15, frequency: 0.15, gap: 0.20, pair: 0.05, distribution: 0.15, seed: 0.0, smart: 0.30 })}
-                  style={{ fontSize: "12px", color: "#94a3b8", background: "none", border: "none", cursor: "pointer" }}
                 >
-                  Reset defaults
-                </button>
+                  RESET DEFAULTS
+                </PixelButton>
               </div>
             </div>
 
             {/* Server Info */}
-            <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "16px", padding: "24px" }}>
-              <h3 style={{ fontSize: "14px", fontWeight: 700, color: "#f1f5f9", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "16px" }}>Server Info</h3>
+            <div style={card}>
+              <h3 style={h3}>SERVER INFO</h3>
               {serverInfo ? (
-                <div style={{ fontSize: "12px", color: "#cbd5e1", display: "flex", flexDirection: "column", gap: "4px" }}>
+                <div style={{ ...muted, display: "flex", flexDirection: "column", gap: "4px" }}>
                   <p>Draws used for statistics: {serverInfo.main_draws} (7/50 era since {serverInfo.era_start}, 7/{serverInfo.pool_size} since {serverInfo.era3_start})</p>
                   <p>Total draws in CSV: {serverInfo.all_draws}</p>
-                  <p>TensorFlow: <span style={{ color: serverInfo.tf_available ? "#4ade80" : "#f87171" }}>{serverInfo.tf_available ? "Available" : "Not installed (LSTM disabled)"}</span></p>
-                  <p>Main model: <span style={{ color: serverInfo.main_model_loaded ? "#4ade80" : "#f87171" }}>{serverInfo.main_model_loaded ? "Loaded" : "Not trained"}</span></p>
+                  <p>TensorFlow: <span style={{ color: serverInfo.tf_available ? C.good : C.bad }}>{serverInfo.tf_available ? "Available" : "Not installed (LSTM disabled)"}</span></p>
+                  <p>Main model: <span style={{ color: serverInfo.main_model_loaded ? C.good : C.bad }}>{serverInfo.main_model_loaded ? "Loaded" : "Not trained"}</span></p>
                   {serverInfo.last_trained && <p>Last trained: {new Date(serverInfo.last_trained).toLocaleString()}</p>}
                 </div>
               ) : (
-                <p style={{ fontSize: "12px", color: "#94a3b8" }}>Not connected</p>
+                <p style={muted}>NOT CONNECTED</p>
               )}
-              <button
-                onClick={async () => {
-                  await fetch(`${API}/reload-data`, { method: "POST" });
-                  checkServer();
-                }}
-                style={{
-                  marginTop: "12px",
-                  padding: "8px 16px",
-                  background: "rgba(255,255,255,0.05)",
-                  border: "1px solid rgba(255,255,255,0.15)",
-                  borderRadius: "8px",
-                  fontSize: "12px",
-                  color: "#e2e8f0",
-                  cursor: "pointer",
-                }}
-              >
-                Reload CSV Data
-              </button>
+              <div style={{ marginTop: "16px" }}>
+                <PixelButton
+                  tone="plain"
+                  onClick={async () => {
+                    await fetch(`${API}/reload-data`, { method: "POST" });
+                    checkServer();
+                  }}
+                >
+                  RELOAD CSV DATA
+                </PixelButton>
+              </div>
             </div>
           </div>
         )}
 
         {/* Footer */}
-        <footer style={{ marginTop: "48px", textAlign: "center", fontSize: "12px", color: "#94a3b8", lineHeight: 1.7 }}>
+        <footer style={{ marginTop: "48px", textAlign: "center", fontFamily: FONT, fontSize: "8px", color: C.dim, lineHeight: 2 }}>
           <p>LottoMax AI — LSTM + 7-Strategy Ensemble Engine</p>
           <p style={{ marginTop: "4px" }}>
             정직 고지: 추첨은 완전한 무작위이며 어떤 전략도 번호 적중 확률을 높일 수 없습니다 (Backtest 탭에서 직접 확인 가능).
